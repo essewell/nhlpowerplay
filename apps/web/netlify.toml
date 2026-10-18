@@ -1,11 +1,12 @@
 # Netlify build for apps/web (Next.js App Router) in the pnpm monorepo.
-# Site: powerplay-game. Base directory in the Netlify UI: apps/web (this file is read from there).
-# pnpm resolves the workspace root (pnpm-workspace.yaml) from here, so workspace packages install too.
+# Site: powerplay-game, linked to essewell/nhlpowerplay with base directory = repo root and
+# package directory = apps/web (Netlify's monorepo mode). Netlify reads this file from the package
+# directory, but runs the command and resolves `publish` from the base (repo root).
 # The Next.js runtime (@netlify/plugin-nextjs) is added automatically; do not pin it.
 
 [build]
-  command = "pnpm run build"   # prebuild: no synthetic fixtures; postbuild: same check over .next
-  publish = ".next"
+  command = "pnpm --filter @powerplay/web build"   # prebuild: no synthetic fixtures; postbuild: same check over .next
+  publish = "apps/web/.next"
 
 [build.environment]
   NODE_VERSION = "24"          # scripts run .ts natively (Node >= 22.18); matches .nvmrc and CI
