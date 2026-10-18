@@ -10,7 +10,7 @@
  * facts, years, names or percentages typed into UI code. No analytics. v1 has no backend: runs,
  * streaks and settings live in localStorage (docs/LAUNCH.md).
  */
-import type { CallOption, Call, RunState, RunInput, Phase } from "@powerplay/engine/sim-types.ts";
+import type { CallOption, Call, GameType, RunState, RunInput, Phase } from "@powerplay/engine/sim-types.ts";
 import type { RatingFlag } from "@powerplay/engine/loader.ts";
 
 export type Mode = "daily" | "endless";
@@ -27,6 +27,17 @@ export interface ScenarioView {
   gameNumber: number | null;                             // derived from the NHL game id
   stakes: string | null;                                 // curated narrative only, else null
   players: Record<number, { number: number | null; first: string; last: string; pos: string }>;
+  /** 2 = regular season, 3 = playoffs. Optional so hand-built views keep compiling; readers fall back to 3 (v1 data is playoffs only). */
+  gameType?: GameType;
+  /** What the real bench did (export `real_outcome`). Optional for the same reason; the Results card is omitted when absent. */
+  realOutcome?: {
+    result: "goal" | "no_goal" | "sh_goal_against";
+    scorerId: number | null;
+    /** [primary, secondary] assist ids from the play-by-play, null where there was none. */
+    assistIds: [number | null, number | null];
+    /** Seconds elapsed in the scenario's period when the real power play ended. */
+    endT: number;
+  };
 }
 
 export type Loadable<T> =
@@ -72,6 +83,8 @@ export interface GradeReport {
   percentile: number | null;
   looksLike: string | null;
   approx: boolean;
+  /** Grader constant for the "Best call or within N pts" legend line. Optional until Step 5 supplies it; the legend then drops the phrase. */
+  bestThresholdPts?: number;
 }
 
 /** lib/copy.ts: `t(key, vars?)`; unknown key -> throws in dev, returns the key in prod builds. */

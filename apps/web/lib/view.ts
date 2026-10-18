@@ -62,5 +62,12 @@ export function toScenarioView(sc: Scenario): ScenarioView {
     gameNumber: gameNumberFromId(sc.game.nhl_game_id, sc.game.game_type),
     stakes: title !== undefined && title.length > 0 ? title : null,
     players,
+    gameType: sc.game.game_type,
+    realOutcome: {
+      result: sc.real_outcome.result,
+      scorerId: sc.real_outcome.scorer_id,
+      assistIds: [sc.real_outcome.assist1_id, sc.real_outcome.assist2_id],
+      endT: sc.real_outcome.end_t,
+    },
   };
 }

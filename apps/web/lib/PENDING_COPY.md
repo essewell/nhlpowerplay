@@ -58,6 +58,24 @@ headings and buttons), middle dot as separator. `{pct}` is a number without the 
 | how.modes.endless.body.noRange | Random real playoff power plays, back to back. | Season-range-free variants (used while the export gives no season range) |
 | home.tile.endless.body.noRange | Random real playoff power plays. | Season-range-free variants (used while the export gives no season range) |
 | shot.footnote.noRange | Built from real playoff power-play shots by type and distance, {lastName}'s finishing and the goalie's record. | Season-range-free variants (used while the export gives no season range) |
+| home.menu | Menu | Home: menu sheet, resume state, challenge line and score separator |
+| home.daily.cta.resume | Continue the power play | Home: menu sheet, resume state, challenge line and score separator |
+| home.daily.challenge | Can you out-call the real bench? | Home: menu sheet, resume state, challenge line and score separator |
+| home.daily.score | {pp} – {pk} | Home: menu sheet, resume state, challenge line and score separator |
+| common.dash | — | Home: menu sheet, resume state, challenge line and score separator |
+| nav.results | Results | Results: route title, states and variants COPY.md does not cover |
+| results.eyebrow.daily.noNumber | Daily · {teamA} vs {teamB} | Results: route title, states and variants COPY.md does not cover |
+| results.banner.goal.subNoClock | Power-play goal | Results: route title, states and variants COPY.md does not cover |
+| results.banner.goal.sub.multi | {n} power-play goals, the last at {clock} of the {periodOrdinal} | Results: route title, states and variants COPY.md does not cover |
+| results.realBench.goalNoScorer | Scored · {clock} | Results: route title, states and variants COPY.md does not cover |
+| results.realBench.chain2 | {a} → {b} | Results: route title, states and variants COPY.md does not cover |
+| results.noRun.title | No result yet | Results: route title, states and variants COPY.md does not cover |
+| results.noRun.body | Play a power play and your result will show up here. | Results: route title, states and variants COPY.md does not cover |
+| results.noRun.cta | Take the bench | Results: route title, states and variants COPY.md does not cover |
+| results.inProgress.body | That run isn't finished yet. Pick up where you left off. | Results: route title, states and variants COPY.md does not cover |
+| results.loading.run | Loading your result… | Results: route title, states and variants COPY.md does not cover |
+| results.grades.pending | Call grades aren't available yet. | Results: route title, states and variants COPY.md does not cover |
+| results.tile.pending | Not available yet | Results: route title, states and variants COPY.md does not cover |
 | site.pending.date | date to be added | Legal pages: placeholders while lib/site.ts has no value |
 | site.pending.email | contact email to be added | Legal pages: placeholders while lib/site.ts has no value |
 | a11y.estimateInfo | About this estimate | Accessible names for icon-only controls |

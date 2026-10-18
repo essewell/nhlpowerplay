@@ -48,8 +48,8 @@ export function formatLegalDate(iso: string | null): string | null {
   return new Intl.DateTimeFormat("en-CA", { dateStyle: "long", timeZone: "UTC" }).format(d);
 }
 
-/** Where "Take the bench" on How it works goes. "/" until the play route is settled (app/play is another owner). */
-export const HOW_CTA_HREF = "/";
+/** Where "Take the bench" on How it works goes: today's Daily. */
+export const HOW_CTA_HREF = "/play/daily";
 
 /** = --color-bg in globals.css; used for the browser theme colour and the PWA manifest. */
 export const THEME_COLOR = "#0B1220";

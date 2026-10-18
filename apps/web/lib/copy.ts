@@ -404,6 +404,28 @@ export const PENDING_COPY = {
   "shot.footnote.noRange":
     "Built from real playoff power-play shots by type and distance, {lastName}'s finishing and the goalie's record.",
 
+  // Home: menu sheet, resume state, challenge line and score separator.
+  "home.menu": "Menu",
+  "home.daily.cta.resume": "Continue the power play",
+  "home.daily.challenge": "Can you out-call the real bench?",
+  "home.daily.score": "{pp} – {pk}",
+  "common.dash": "—",
+
+  // Results: route title, states COPY.md does not cover, and variants of its banner and bench lines.
+  "nav.results": "Results",
+  "results.eyebrow.daily.noNumber": "Daily · {teamA} vs {teamB}",
+  "results.banner.goal.subNoClock": "Power-play goal",
+  "results.banner.goal.sub.multi": "{n} power-play goals, the last at {clock} of the {periodOrdinal}",
+  "results.realBench.goalNoScorer": "Scored · {clock}",
+  "results.realBench.chain2": "{a} → {b}",
+  "results.noRun.title": "No result yet",
+  "results.noRun.body": "Play a power play and your result will show up here.",
+  "results.noRun.cta": "Take the bench",
+  "results.inProgress.body": "That run isn't finished yet. Pick up where you left off.",
+  "results.loading.run": "Loading your result…",
+  "results.grades.pending": "Call grades aren't available yet.",
+  "results.tile.pending": "Not available yet",
+
   // Legal pages: shown while lib/site.ts has no value for the date or contact email.
   "site.pending.date": "date to be added",
   "site.pending.email": "contact email to be added",

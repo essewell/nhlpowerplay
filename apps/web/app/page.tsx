@@ -1,11 +1,7 @@
-// Step 1 placeholder home. The real Home screen (Daily card, tiles, streak) lands in Step 4.
+import { HomeView } from "../components/home/HomeView.tsx";
+import { getSeasonRange } from "../lib/site.ts";
+
+// The root layout sets the default title (COPY.md meta.title.home).
 export default function Home() {
-  return (
-    <main className="mx-auto flex min-h-dvh max-w-[390px] flex-col items-center justify-center gap-3 px-4">
-      <h1 className="font-display text-5xl font-bold uppercase tracking-wide text-text">
-        Power<span className="text-accent">Play</span>
-      </h1>
-      <p className="font-body text-base text-text-muted">Coming soon.</p>
-    </main>
-  );
+  return <HomeView seasonRange={getSeasonRange()} />;
 }

@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Barlow_Condensed, IBM_Plex_Sans } from "next/font/google";
-import { Footer } from "../components/ui/Footer.tsx";
+import { PlayAwareFooter } from "../components/play/PlayAwareFooter.tsx";
 import { rawCopy, t } from "../lib/copy.ts";
 import { isProductionDeploy, THEME_COLOR } from "../lib/site.ts";
 import "./globals.css";
@@ -64,7 +64,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="en" className={`${barlowCondensed.variable} ${ibmPlexSans.variable}`}>
       <body className="flex min-h-dvh flex-col antialiased">
         <div className="flex flex-1 flex-col">{children}</div>
-        <Footer />
+        <PlayAwareFooter />
       </body>
     </html>
   );
