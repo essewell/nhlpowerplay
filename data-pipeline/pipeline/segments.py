@@ -31,17 +31,27 @@ logger = logging.getLogger(__name__)
 
 
 def restart_event(events: list[Event], open_idx: int, pp_is_home: bool) -> Event | None:
-    """The restart faceoff for a PP opened at events[open_idx], or None.
+    """The restart faceoff for a PP opened at events[open_idx], or None. O(k) for k events walked.
 
     Walks forward from the opener (inclusive) through dead-puck events only
-    (config.DEAD_PUCK_EVENTS: penalty, stoppage, delayed-penalty,
-    period-start) and returns the first faceoff, if it still shows this side
-    on a power play. Clock stamps are not compared: the PBP can log a
-    stoppage after its own restart time (e.g. stoppage 16:21, faceoff 16:19).
-    Returns None when the opener or anything before the faceoff is a live-play
-    event (the PP began in play, e.g. a penalty expiring), when the period
-    ends first, or when the faceoff no longer shows the PP; the caller then
-    falls back to the opening event, explicitly. O(k) for the k events walked.
+    (config.DEAD_PUCK_EVENTS: penalty, stoppage, delayed-penalty, period-start)
+    and returns the first faceoff if it still shows this side on a power play.
+
+    Clock stamps: every event stamped EARLIER than the opener (ev.t < opener.t),
+    of any kind, faceoffs included, is skipped. The PBP logs some live-play events
+    late (a blocked shot stamped 10:43 after a stoppage at 10:47) and those are
+    not play after the restart. Events at or after the opener's stamp are not
+    compared with each other: a stoppage logged after its own restart time is
+    fine. Consequence (3 of 6657 cached openers, e.g. stoppage 16:21 then faceoff
+    16:19): a restart faceoff stamped before the opener is skipped too, and the
+    caller falls back to the opener.
+
+    Returns None, and the caller falls back to the opening event with
+    strength_source=STRENGTH_FROM_OPENER, when: the opener or anything before the
+    faceoff is a live-play event (the PP began in play, e.g. a penalty expiring);
+    the period ends first; the faceoff no longer shows the PP; or the first
+    faceoff has no situationCode (it is never skipped in favour of a later one,
+    which could belong to a different stoppage).
     """
     opener = events[open_idx]
     for ev in events[open_idx:]:
@@ -51,7 +61,9 @@ def restart_event(events: list[Event], open_idx: int, pp_is_home: bool) -> Event
             continue  # logged late but stamped before the opener: not play after the restart
         if ev.kind != config.EV_FACEOFF and ev.kind not in config.DEAD_PUCK_EVENTS:
             return None
-        if ev.kind == config.EV_FACEOFF and ev.situation is not None:
+        if ev.kind == config.EV_FACEOFF:
+            if ev.situation is None:
+                return None
             return ev if ev.situation.is_power_play(pp_is_home) else None
     return None
 
@@ -195,8 +207,8 @@ def build_segments(header: GameHeader, events: list[Event]) -> list[PpSegment]:
             if restart is None:
                 # Common and legitimate when a PP begins in live play; the
                 # segment records strength_source so callers can count these.
-                logger.info("game %s P%s %ss: no restart faceoff after the opener; strength taken from "
-                            "the opening %s event", header.game_id, ev.period, ev.t, ev.kind)
+                logger.info("game %s P%s %ss: no restart faceoff with a situationCode after the opener; "
+                            "strength taken from the opening %s event", header.game_id, ev.period, ev.t, ev.kind)
                 restart, source = ev, STRENGTH_FROM_OPENER
             else:
                 source = STRENGTH_FROM_FACEOFF

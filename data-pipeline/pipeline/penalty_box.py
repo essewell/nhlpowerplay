@@ -9,17 +9,27 @@ Rules (sources and tunables in config.py):
     config.PENALTY_KIND_BY_CODE into minor / double_minor / major, or None for
     penalties that put no man down (misconduct, game misconduct, penalty shot).
     An unrecognised pair raises PenaltyError listing every such pair in the game.
-  - Equal penalties to both teams at the same (period, t) cancel pairwise per
-    kind (coincidental; nobody shorthanded).
+  - Coincidental penalties (NHL Rule 19, quotes in config.py). At one stoppage,
+    equal same-kind penalties to both teams are dropped (substitutes keep both
+    sides whole) and the surplus is served normally -- EXCEPT the bare case of one
+    minor per team with nothing else running or queued, which Rule 19.1 serves
+    without substitution as 4v4: both go on the box flagged `coincidental`.
+    Coincidental seats count as skaters down on their side (so a later third
+    penalty gets the right advantage and end time) but never create an advantage
+    by themselves and are never the penalty a goal releases.
   - At most config.MAX_ACTIVE_PENALTIES_PER_SIDE run per side; further ones
     queue and start when a running one ends.
   - A player's second penalty is served after his first (same seat, no extra
     man down); at the same instant a major is served before a minor.
   - A power-play goal (scoring team has more skaters per the goal's
-    situationCode, or per the box when the code is absent) ends the earliest
-    running minor of the shorthanded side, or ends the current half of a
-    running double minor (more than MINOR_S left -> MINOR_S left). Majors are
-    never released.
+    situationCode, or per the box when the code is absent) ends the
+    NON-coincidental running minor with the LEAST TIME LEFT on the shorthanded
+    side (Rule 16.2: "the minor penalty with the least amount of time on the
+    clock shall terminate"), or, for a double minor, the minor in progress
+    (more than MINOR_S left -> the second minor starts: MINOR_S left). Majors
+    are never released. Penalties expiring in the goal's own second are
+    processed BEFORE the release (the box is advanced to the goal time first),
+    so a penalty that ends in that second is gone and cannot also be the one released.
 
 All times are absolute game seconds: (period - 1) * PERIOD_LENGTH_S + t.
 
@@ -30,7 +40,7 @@ construction and each at() call builds its own private box state.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from . import config
@@ -57,6 +67,7 @@ class BoxPenalty:
     player_id: int | None      # player serving (servedByPlayerId, else committedByPlayerId)
     kind: str
     called_at: int             # absolute seconds
+    coincidental: bool = False  # Rule 19.1 4v4 pair: a skater down but never released by a goal
 
 
 @dataclass(frozen=True)
@@ -67,10 +78,10 @@ class BoxSnapshot:
 
 def classify(ev: Event) -> str | None:
     """Kind for one penalty event, or None if it puts no man down. Raises PenaltyError. O(1)."""
-    key = (ev.penalty_type, ev.penalty_minutes)
-    if key not in config.PENALTY_KIND_BY_CODE:
+    code = (str(ev.penalty_type), ev.penalty_minutes)
+    if code not in config.PENALTY_KIND_BY_CODE:
         raise PenaltyError(f"unrecognised penalty code {_describe(ev)}; add it to config.PENALTY_KIND_BY_CODE")
-    return config.PENALTY_KIND_BY_CODE[key]  # type: ignore[index]
+    return config.PENALTY_KIND_BY_CODE[code]
 
 
 def _describe(ev: Event) -> tuple[str, str, str]:
@@ -81,6 +92,7 @@ def _describe(ev: Event) -> tuple[str, str, str]:
 class _Item:
     pen: BoxPenalty
     remaining: int             # seconds left on this penalty when it (re)starts
+    coincidental: bool = False
 
 
 @dataclass
@@ -122,7 +134,7 @@ class _Box:
             self.active[team].append(nxt)
 
     def add(self, pen: BoxPenalty) -> None:
-        item = _Item(pen, config.PENALTY_DURATION_S[pen.kind])
+        item = _Item(pen, config.PENALTY_DURATION_S[pen.kind], pen.coincidental)
         if pen.player_id is not None:
             for seat in self.active[pen.team_id] + self.queued[pen.team_id]:
                 if seat.player_id == pen.player_id:
@@ -157,12 +169,27 @@ class _Box:
     def men_down(self, team: int) -> int:
         return len(self.active[team])
 
+    def idle(self) -> bool:
+        """True when no penalty is running or queued on either side. O(1)."""
+        return not any(self.active[t] or self.queued[t] for t in self.teams)
+
+    @staticmethod
+    def _clock_left(seat: _Seat, at: int) -> int:
+        """Seconds on the clock of the minor in progress (a double minor shows its current half). O(1)."""
+        assert seat.head_end is not None
+        left = seat.head_end - at
+        if seat.chain[0].pen.kind == config.PEN_DOUBLE_MINOR and left > config.MINOR_S:
+            return left - config.MINOR_S
+        return left
+
     def release_on_pp_goal(self, shorthanded_team: int, at: int) -> None:
+        """NHL Rule 16.2: end the non-coincidental minor with the least time on the clock. O(S)."""
         minors = [s for s in self.active[shorthanded_team]
-                  if s.chain[0].pen.kind in (config.PEN_MINOR, config.PEN_DOUBLE_MINOR)]
+                  if s.chain[0].pen.kind in (config.PEN_MINOR, config.PEN_DOUBLE_MINOR)
+                  and not s.chain[0].coincidental]
         if not minors:
-            return  # only majors running: never released
-        seat = min(minors, key=lambda s: (s.head_start, s.chain[0].pen.order))
+            return  # only majors / coincidentals running: nothing is released
+        seat = min(minors, key=lambda s: (self._clock_left(s, at), s.chain[0].pen.order))
         assert seat.head_end is not None
         left = seat.head_end - at
         if seat.chain[0].pen.kind == config.PEN_DOUBLE_MINOR and left > config.MINOR_S:
@@ -179,10 +206,12 @@ class _Box:
                 assert seat.head_end is not None
                 for i, item in enumerate(seat.chain):
                     running = i == 0
-                    rows.append(((side_rank, 0 if running else 1, item.pen.order), {
-                        "side": side, "player_id": item.pen.player_id, "kind": item.pen.kind,
-                        "remaining_s": (seat.head_end - self.now) if running else item.remaining,
-                        "queued": not running}))
+                    row = {"side": side, "player_id": item.pen.player_id, "kind": item.pen.kind,
+                           "remaining_s": (seat.head_end - self.now) if running else item.remaining,
+                           "queued": not running}
+                    if item.coincidental:
+                        row["coincidental"] = True  # key present only on Rule 19.1 4v4 seats
+                    rows.append(((side_rank, 0 if running else 1, item.pen.order), row))
             for seat in self.queued[team]:
                 for item in seat.chain:
                     rows.append(((side_rank, 1, item.pen.order), {
@@ -219,11 +248,11 @@ class PenaltyReplay:
         goals: list[tuple[int, int, Event]] = []
         for order, ev in enumerate(events):
             if ev.kind == config.EV_PENALTY:
-                key = (ev.penalty_type, ev.penalty_minutes)
-                if key not in config.PENALTY_KIND_BY_CODE:
+                try:
+                    kind = classify(ev)
+                except PenaltyError:
                     unknown.add(_describe(ev))
                     continue
-                kind = config.PENALTY_KIND_BY_CODE[key]  # type: ignore[index]
                 if kind is None:
                     continue
                 if ev.team_id not in teams:
@@ -241,9 +270,7 @@ class PenaltyReplay:
                                f"{sorted(unknown)}; add them to config.PENALTY_KIND_BY_CODE")
         timeline: list[tuple[int, int, str, Any]] = []
         for at, pens in batches.items():
-            kept = _cancel_coincidental(pens, header)
-            if kept:
-                timeline.append((at, batch_order[at], "penalties", kept))
+            timeline.append((at, batch_order[at], "penalties", pens))
         for at, order, ev in goals:
             timeline.append((at, order, "goal", ev))
         timeline.sort(key=lambda x: (x[0], x[1]))
@@ -269,7 +296,7 @@ class PenaltyReplay:
                 break
             box.advance(at)
             if what == "penalties":
-                for pen in payload:
+                for pen in _cancel_coincidental(payload, h, box.idle()):
                     box.add(pen)
             else:
                 scorer = int(payload.team_id)
@@ -281,13 +308,37 @@ class PenaltyReplay:
 
 
 def _is_pp_goal(goal: Event, scorer_is_home: bool, box: _Box, scorer: int, victim: int) -> bool:
+    """True if the scoring team was on a power play when it scored. O(1).
+
+    A goal's situationCode is the state BEFORE the goal, not after it. Measured on
+    the 999 cached games (2015-16..2025-26 playoffs), 5.7k goals:
+      - 1127 goals carry a PP code while the previous event is PP, the next event
+        is even strength and the box replay shows the victim a man down: the code
+        on the goal still shows the advantage the goal ended (a post-goal code
+        would read even strength). By situationCode alone 1188 of 1265 goals that
+        end an advantage look like this; short-handed goals likewise (267 vs 26).
+      - 64 goals carry an even code while the previous event is PP and the next is
+        even; the box agrees in 62 that the minor had already expired before the
+        goal, so those are correctly not power-play goals.
+    So the box is released from the code on the goal itself, never from the next
+    event's code. Without a code, fall back to the box's skater-down counts
+    (coincidental seats included: a 4v4 pair gives no advantage).
+    """
     if goal.situation is not None:
         return goal.situation.is_power_play(scorer_is_home)
     return box.men_down(victim) > box.men_down(scorer)
 
 
-def _cancel_coincidental(pens: list[BoxPenalty], header: GameHeader) -> list[BoxPenalty]:
-    """Drop equal same-kind penalty pairs across the two teams; majors first per player. O(n log n)."""
+def _cancel_coincidental(pens: list[BoxPenalty], header: GameHeader, box_idle: bool) -> list[BoxPenalty]:
+    """Apply NHL Rule 19 to the man-down penalties assessed at one stoppage. O(n log n).
+
+    box_idle: nothing running or queued on either side when the stoppage happens.
+    Exactly one minor per team on an idle box is served as a 4v4 pair (both kept,
+    flagged coincidental); otherwise equal same-kind pairs are dropped (majors
+    first per player) and the surplus is returned for normal service.
+    """
+    if box_idle and len(pens) == 2 and all(p.kind == config.PEN_MINOR for p in pens)             and {p.team_id for p in pens} == {header.home_id, header.away_id}:
+        return sorted((replace(p, coincidental=True) for p in pens), key=lambda p: p.order)
     cancelled: set[int] = set()
     for kind in (config.PEN_MINOR, config.PEN_DOUBLE_MINOR, config.PEN_MAJOR):
         home = [p for p in pens if p.kind == kind and p.team_id == header.home_id]

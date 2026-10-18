@@ -90,8 +90,22 @@ PEN_MAJOR = "major"
 DOUBLE_MINOR_S = 2 * MINOR_S            # NHL Rule 18 (double minor = two consecutive minors)
 MAJOR_S = 300                           # NHL Rule 20 (major = 5 minutes)
 PENALTY_DURATION_S = {PEN_MINOR: MINOR_S, PEN_DOUBLE_MINOR: DOUBLE_MINOR_S, PEN_MAJOR: MAJOR_S}
-# Minutes in details.duration -> kind (Emmett's spec: 2 minor, 4 double minor, 5 major).
+# Minutes in details.duration -> kind: Rule 16.1 minor = 2 min, Rule 18.1 double minor = 4 min,
+# Rule 20.1 major = 5 min (NHL Official Rules 2025-26, media.nhl.com/site/asset/public/ext/2025-26/2025-26Rules.pdf).
 PENALTY_KIND_BY_MINUTES = {2: PEN_MINOR, 4: PEN_DOUBLE_MINOR, 5: PEN_MAJOR}
+# NHL Rule 16.2 (goal against a short-handed team): "If both criteria are
+# satisfied, the minor penalty with the least amount of time on the clock shall
+# terminate" (criteria: the team scored against is short-handed, i.e. "below the
+# numerical strength of its opponent on the ice at the time the goal is scored",
+# and is serving a minor on the clock). The same paragraph also says "the first of
+# such penalties shall automatically terminate"; the criteria sentence is the
+# specific one, so the penalty with the LEAST TIME LEFT is released, not the one
+# that started first. Table 12 (A1/A2) for a double minor: a goal in its first half
+# ends the first minor and "the second begins" at the goal; in the second half it
+# ends the penalty. "No penalty shall expire when a goal is scored ... on a penalty
+# shot" (not modelled).
+# ASSUMPTION: for a double minor the time on the clock compared across seats is
+# that of the minor in progress (left - MINOR_S while more than MINOR_S is left).
 # NHL Rule 26 (delayed penalties): a team is never below three skaters, so at
 # most two penalties per side run at once; further ones wait in a queue.
 MAX_ACTIVE_PENALTIES_PER_SIDE = 2
@@ -113,11 +127,31 @@ PENALTY_KIND_BY_CODE: dict[tuple[str, int], str | None] = {
     ("GAM", 10): None,                  # game misconduct (NHL Rule 23) (45)
     ("PS", 0): None,                    # penalty shot awarded instead of a minor (NHL Rule 24) (21)
 }
-# NHL Rule 19 (coincidental penalties): equal penalties to both teams at the
-# same stoppage cancel and nobody is shorthanded. Applied per kind (minor vs
-# minor, double vs double, major vs major). ASSUMPTION: which of several
-# same-kind penalties cancel is taken in event order (the rule leaves it to the
-# captains), and unequal mixes beyond pairwise same-kind cancelling are not netted.
+# NHL Rule 19 (coincidental penalties), NHL Official Rules 2025-26 (same PDF):
+#  - 19.1: "When one minor penalty is assessed to one player of each team at the
+#    same stoppage in play, these penalties will be served without substitution
+#    provided there are no other penalties in effect and visible on the penalty
+#    clocks. Both teams will therefore play four skaters against four skaters".
+#    Implemented exactly: a stoppage whose only man-down penalties are one minor
+#    (or bench minor) per team, with nothing running or queued on either side,
+#    puts BOTH on the box as `coincidental` (they cost a skater each: 4v4).
+#  - 19.1 otherwise: "Immediate substitution shall be made for an equal number of
+#    minor penalties ... and the penalties of the players for which substitutions
+#    have been made shall not be taken into account"; 19.2 does the same for
+#    majors; 19.5 says cancel as many major/match, then as many minor / bench
+#    minor / double-minor as possible, "any differential ... served in the normal
+#    manner". Implemented: equal same-kind pairs are dropped from the box (the
+#    substitutes keep both sides at full strength); the surplus is served normally.
+#  - 16.2: "coincident minor penalties to both Teams do not cause either side to be
+#    'short-handed'", and a goal terminates "the minor penalty with the least
+#    amount of time on the clock ... except when coincidental penalties are being
+#    served" (Table 12 G4: A15 coincidental, A23 a later minor, goal -> A23 returns).
+#    Implemented: coincidental box seats count as skaters down on both sides (so a
+#    third penalty gets the right 5v4 / 4v3 advantage and end time) but are never
+#    the penalty a power-play goal releases.
+# ASSUMPTION: which of several same-kind penalties cancel is taken in event order
+# (the rule leaves it to the captains), and unequal-kind mixes (a minor against
+# one half of a double minor, a minor against a major) are not netted.
 
 # ---------------------------------------------------------------------------
 # Event vocabulary (typeDescKey values used by hockeyR against this API)

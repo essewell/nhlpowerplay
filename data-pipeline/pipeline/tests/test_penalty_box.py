@@ -130,9 +130,12 @@ class TestReplayRules(unittest.TestCase):
         self.assertEqual([(p["kind"], p["remaining_s"]) for p in s.penalties], [("major", 300)])
         self.assertEqual(s.advantage_end_abs - abs_time(3, 553), 300)
 
-    def test_coincidental_minors_cancel(self):
+    def test_coincidental_minors_are_served_four_on_four(self):
+        # NHL Rule 19.1: one minor each, nothing else running -> served without substitution (4v4).
         s = snap([pen(1, 1, "05:00", AWAY, 7), pen(2, 1, "05:00", HOME, 8)], 1, 301)
-        self.assertEqual((s.penalties, s.advantage_end_abs), ([], None))
+        self.assertEqual([(p["side"], p["player_id"], p["remaining_s"], p["coincidental"]) for p in s.penalties],
+                         [("pk", 7, 119, True), ("pp", 8, 119, True)])
+        self.assertIsNone(s.advantage_end_abs)  # equal skaters down: no advantage
 
     def test_coincidental_cancel_leaves_the_extra_minor(self):
         s = snap([pen(1, 1, "05:00", AWAY, 7), pen(2, 1, "05:00", HOME, 8), pen(3, 1, "05:00", AWAY, 9)], 1, 301)
@@ -142,7 +145,7 @@ class TestReplayRules(unittest.TestCase):
     def test_coincidental_majors_cancel(self):
         plays = [pen(1, 1, "05:00", AWAY, 7, code="MAJ", minutes=5, desc="fighting"),
                  pen(2, 1, "05:00", HOME, 8, code="MAJ", minutes=5, desc="fighting")]
-        self.assertEqual(snap(plays, 1, 301).penalties, [])
+        self.assertEqual(snap(plays, 1, 301).penalties, [])  # Rule 19.2: substitutes, nobody short
 
     def test_minors_at_different_times_do_not_cancel(self):
         s = snap([pen(1, 1, "05:00", AWAY, 7), pen(2, 1, "05:01", HOME, 8)], 1, 302)
@@ -331,6 +334,200 @@ class TestDataStatusRegressions(unittest.TestCase):
         s = next(x for x in segs if x.start_t == 420)
         self.assertEqual(s.strength_source, STRENGTH_FROM_OPENER)
         self.assertIn("no restart faceoff", "\n".join(logs.output))
+
+
+# ---------------------------------------------------------------------------
+# Rule 19 coincidental penalties and Rule 16.2 release choice
+# ---------------------------------------------------------------------------
+def rows(s):
+    return [(p["side"], p["player_id"], p["kind"], p["remaining_s"], p["queued"], p.get("coincidental", False))
+            for p in s.penalties]
+
+
+class TestCoincidentalRule19(unittest.TestCase):
+    def test_pair_expires_after_two_minutes(self):
+        plays = [pen(1, 1, "05:00", AWAY, 7), pen(2, 1, "05:00", HOME, 8)]
+        self.assertEqual(snap(plays, 1, 420).penalties, [])
+        self.assertEqual(len(snap(plays, 1, 419).penalties), 2)
+
+    def test_third_penalty_during_pair_gives_advantage_to_its_own_end(self):
+        plays = [pen(1, 1, "05:00", AWAY, 7), pen(2, 1, "05:00", HOME, 8), pen(3, 1, "05:30", AWAY, 9)]
+        s = snap(plays, 1, 330)
+        self.assertEqual(rows(s), [("pk", 7, "minor", 90, False, True), ("pk", 9, "minor", 120, False, False),
+                                   ("pp", 8, "minor", 90, False, True)])
+        self.assertEqual(s.advantage_end_abs, 330 + 120)  # the new minor alone decides the end
+        later = snap(plays, 1, 430)  # pair expired at 420; still a power play until 450
+        self.assertEqual(rows(later), [("pk", 9, "minor", 20, False, False)])
+        self.assertEqual(later.advantage_end_abs, 450)
+
+    def test_third_penalty_to_the_other_team_swaps_the_advantage(self):
+        plays = [pen(1, 1, "05:00", AWAY, 7), pen(2, 1, "05:00", HOME, 8), pen(3, 1, "05:30", HOME, 9)]
+        self.assertEqual(snap(plays, 1, 330, pp_team=AWAY).advantage_end_abs, 450)
+        self.assertIsNone(snap(plays, 1, 330, pp_team=HOME).advantage_end_abs)
+
+    def test_pair_during_existing_pk_is_substituted(self):
+        # AWAY already shorthanded 5:00-7:00; a pair at 6:00 is not 4v4: box unchanged.
+        plays = [pen(1, 1, "05:00", AWAY, 7), pen(2, 1, "06:00", AWAY, 8), pen(3, 1, "06:00", HOME, 9)]
+        s = snap(plays, 1, 361)
+        self.assertEqual([r[1] for r in rows(s)], [7])
+        self.assertEqual(s.advantage_end_abs, 420)
+
+    def test_second_pair_with_first_pair_still_on_clock_is_substituted(self):
+        plays = [pen(1, 1, "05:00", AWAY, 7), pen(2, 1, "05:00", HOME, 8),
+                 pen(3, 1, "05:30", AWAY, 9), pen(4, 1, "05:30", HOME, 10)]
+        self.assertEqual([r[1] for r in rows(snap(plays, 1, 331))], [7, 8])
+
+    def test_pair_plus_major_in_same_stoppage_is_not_four_on_four(self):
+        plays = [pen(1, 1, "05:00", AWAY, 7), pen(2, 1, "05:00", HOME, 8),
+                 pen(3, 1, "05:00", AWAY, 9, code="MAJ", minutes=5)]
+        self.assertEqual(rows(snap(plays, 1, 301)), [("pk", 9, "major", 299, False, False)])
+
+    def test_coincidental_double_minors_are_substituted(self):
+        plays = [pen(1, 1, "05:00", AWAY, 7, minutes=4), pen(2, 1, "05:00", HOME, 8, minutes=4)]
+        self.assertEqual(snap(plays, 1, 301).penalties, [])
+
+    def test_two_minors_one_team_one_other_cancels_a_single_pair(self):
+        plays = [pen(1, 1, "05:00", AWAY, 7), pen(2, 1, "05:00", AWAY, 9), pen(3, 1, "05:00", HOME, 8)]
+        s = snap(plays, 1, 301)
+        self.assertEqual([r[1] for r in rows(s)], [9])
+        self.assertFalse(rows(s)[0][5])
+
+    def test_pair_goal_at_equal_strength_releases_nothing(self):
+        plays = [pen(1, 1, "05:00", AWAY, 7), pen(2, 1, "05:00", HOME, 8), goal(3, 1, "05:30", HOME, "1441")]
+        self.assertEqual(len(snap(plays, 1, 331).penalties), 2)
+
+    def test_goal_releases_the_later_minor_not_the_coincidental_one(self):
+        # Rule 16.2 + Table 12 G4: A15 (coincidental) has the least time, yet A23 (3:30) returns.
+        plays = [pen(1, 1, "03:00", AWAY, 15), pen(2, 1, "03:00", HOME, 12), pen(3, 1, "03:30", AWAY, 23),
+                 goal(4, 1, "04:30", HOME, "1341")]
+        s = snap(plays, 1, 271)
+        self.assertEqual(rows(s), [("pk", 15, "minor", 29, False, True), ("pp", 12, "minor", 29, False, True)])
+        self.assertIsNone(s.advantage_end_abs)
+
+    def test_goal_without_situation_with_pair_only_uses_equal_counts(self):
+        plays = [pen(1, 1, "05:00", AWAY, 7), pen(2, 1, "05:00", HOME, 8), goal(3, 1, "05:30", HOME, None)]
+        self.assertEqual(len(snap(plays, 1, 331).penalties), 2)
+
+    def test_pair_players_second_penalty_chains_without_new_seat(self):
+        plays = [pen(1, 1, "05:00", AWAY, 7), pen(2, 1, "05:00", HOME, 8), pen(3, 1, "05:30", AWAY, 7)]
+        s = snap(plays, 1, 331)
+        self.assertEqual([(r[1], r[4]) for r in rows(s)], [(7, False), (7, True), (8, False)])
+        self.assertIsNone(s.advantage_end_abs)  # same seat: still one man down each
+
+    def test_cancel_function_direct(self):
+        a = penalty_box.BoxPenalty(0, 1, AWAY, 7, "minor", 0)
+        b = penalty_box.BoxPenalty(1, 2, HOME, 8, "minor", 0)
+        out = penalty_box._cancel_coincidental([b, a], HEADER, True)
+        self.assertEqual([(p.order, p.coincidental) for p in out], [(0, True), (1, True)])
+        self.assertEqual(penalty_box._cancel_coincidental([a, b], HEADER, False), [])
+        self.assertEqual(penalty_box._cancel_coincidental([a], HEADER, True), [a])
+        c = penalty_box.BoxPenalty(2, 3, AWAY, 9, "minor", 0)
+        self.assertEqual(penalty_box._cancel_coincidental([a, c], HEADER, True), [a, c])
+
+
+class TestReleaseLeastTimeRule16_2(unittest.TestCase):
+    def test_plain_minor_with_less_time_beats_earlier_double_minor(self):
+        # double minor 5:00 (to 9:00), plain minor 6:00 (to 8:00); PP goal 7:30: the plain minor has 30 s left.
+        plays = [pen(1, 1, "05:00", AWAY, 7, minutes=4), pen(2, 1, "06:00", AWAY, 8),
+                 goal(3, 1, "07:30", HOME, "1351")]
+        self.assertEqual(rows(snap(plays, 1, 451)), [("pk", 7, "double_minor", 89, False, False)])
+
+    def test_double_minor_first_half_with_less_time_is_halved(self):
+        # double 5:00 (to 9:00), plain 6:30 (to 8:30); goal 6:45: double's current minor has 15 s, plain 105 s.
+        plays = [pen(1, 1, "05:00", AWAY, 7, minutes=4), pen(2, 1, "06:30", AWAY, 8),
+                 goal(3, 1, "06:45", HOME, "1351")]
+        self.assertEqual(rows(snap(plays, 1, 405)),
+                         [("pk", 7, "double_minor", 120, False, False), ("pk", 8, "minor", 105, False, False)])
+
+    def test_earlier_minor_released_when_it_has_less_time(self):
+        plays = [pen(1, 1, "05:00", AWAY, 7), pen(2, 1, "05:30", AWAY, 8), goal(3, 1, "06:00", HOME, "1351")]
+        self.assertEqual([r[1] for r in rows(snap(plays, 1, 360))], [8])
+
+    def test_tie_on_clock_released_in_event_order(self):
+        plays = [pen(1, 1, "05:00", AWAY, 7), pen(2, 1, "05:00", AWAY, 8), goal(3, 1, "06:00", HOME, "1351")]
+        self.assertEqual([r[1] for r in rows(snap(plays, 1, 360))], [8])
+
+    def test_major_and_minor_only_minor_released(self):
+        plays = [pen(1, 1, "05:00", AWAY, 7, code="MAJ", minutes=5), pen(2, 1, "05:30", AWAY, 8),
+                 goal(3, 1, "06:00", HOME, "1351")]
+        self.assertEqual([(r[1], r[2]) for r in rows(snap(plays, 1, 360))], [(7, "major")])
+
+    def test_expiry_in_the_goal_second_is_processed_before_the_release(self):
+        # p7 ends at 7:00, the goal's own second; the goal then releases p8 (to 7:10), not p7.
+        plays = [pen(1, 1, "05:00", AWAY, 7), pen(2, 1, "05:10", AWAY, 8), goal(3, 1, "07:00", HOME, "1351")]
+        self.assertEqual(snap(plays, 1, 420).penalties, [])
+
+
+class TestGoalSituationCodeIsPreGoalState(unittest.TestCase):
+    """Observed in the cached games: the code on a goal is the strength before the goal."""
+
+    def test_pp_goal_ending_5v4_carries_5v4_and_releases(self):
+        plays = [pen(1, 1, "05:00", AWAY, 7), goal(2, 1, "06:00", HOME, "1451"), fo(3, 1, "06:00", "1551")]
+        s = snap(plays, 1, 360)
+        self.assertEqual((s.penalties, s.advantage_end_abs), ([], None))
+
+    def test_even_code_after_natural_expiry_releases_nothing(self):
+        # previous event 5v4, the first minor ended at 7:00, goal 7:10 carries 5v5: not a PP goal.
+        plays = [pen(1, 1, "05:00", AWAY, 7), pen(2, 1, "06:50", AWAY, 8), goal(3, 1, "07:10", HOME, "1551")]
+        self.assertEqual([r[1] for r in rows(snap(plays, 1, 430))], [8])
+
+    def test_short_handed_goal_carries_pk_code_releases_nothing(self):
+        plays = [pen(1, 1, "05:00", AWAY, 7), goal(2, 1, "06:00", AWAY, "1451"), fo(3, 1, "06:00", "1551")]
+        self.assertEqual(len(snap(plays, 1, 360).penalties), 1)
+
+    def test_even_code_on_goal_wins_over_box(self):
+        # 2 of ~1300 cached goals: box says PP, the code says 5v5. The code is the recorded fact.
+        plays = [pen(1, 1, "05:00", AWAY, 7), goal(2, 1, "06:00", HOME, "1551")]
+        self.assertEqual(len(snap(plays, 1, 360).penalties), 1)
+
+    def test_pp_goal_from_5v3_leaves_one_minor(self):
+        plays = [pen(1, 1, "05:00", AWAY, 7), pen(2, 1, "05:00", AWAY, 8), goal(3, 1, "05:30", HOME, "1351")]
+        s = snap(plays, 1, 330)
+        self.assertEqual(len(s.penalties), 1)
+        self.assertEqual(s.advantage_end_abs, 420)
+
+    def test_extra_attacker_goal_is_not_a_pp_goal(self):
+        # 6v5 with the scoring side's goalie out is not a power play: nothing released.
+        plays = [pen(1, 1, "05:00", AWAY, 7), goal(2, 1, "06:00", HOME, "1550")]
+        self.assertEqual(len(snap(plays, 1, 360).penalties), 1)
+
+
+class TestRestartEventSituationless(unittest.TestCase):
+    def test_faceoff_without_situation_returns_none_not_a_later_faceoff(self):
+        ev = events([pen(1, 1, "05:00", AWAY, 7, sit="1451"),
+                     play(2, "faceoff", 1, "05:00", None, eventOwnerTeamId=HOME, winningPlayerId=1, losingPlayerId=2),
+                     fo(3, 1, "05:00", "1451")])
+        self.assertIsNone(restart_event(ev, 0, True))
+
+    def test_build_segments_falls_back_to_opener_and_logs(self):
+        plays = [fo(1, 1, "04:00", "1551"), pen(2, 1, "05:00", AWAY, 7, sit="1451"),
+                 play(3, "faceoff", 1, "05:00", None, eventOwnerTeamId=HOME, winningPlayerId=1, losingPlayerId=2),
+                 play(4, "shot-on-goal", 1, "05:20", "1451", eventOwnerTeamId=HOME)]
+        with self.assertLogs("pipeline.segments", level="INFO") as logs:
+            segs = build_segments(HEADER, events(plays))
+        s = next(x for x in segs if x.start_t == 300)
+        self.assertEqual(s.strength_source, STRENGTH_FROM_OPENER)
+        self.assertIn("no restart faceoff", "\n".join(logs.output))
+
+    def test_situationless_faceoff_after_live_event_still_none(self):
+        ev = events([play(1, "shot-on-goal", 1, "05:00", "1451", eventOwnerTeamId=HOME),
+                     play(2, "faceoff", 1, "05:10", None, eventOwnerTeamId=HOME, winningPlayerId=1, losingPlayerId=2)])
+        self.assertIsNone(restart_event(ev, 0, True))
+
+    def test_early_stamped_faceoff_is_skipped_like_any_early_event(self):
+        # documented behaviour: events stamped before the opener are skipped, faceoffs included.
+        ev = events([play(1, "stoppage", 1, "16:21", "1451"), fo(2, 1, "16:19", "1451")])
+        self.assertIsNone(restart_event(ev, 0, True))
+
+    def test_faceoff_in_other_period_without_situation(self):
+        ev = events([pen(1, 1, "20:00", AWAY, 7, sit="1451"),
+                     play(2, "faceoff", 2, "00:00", None, eventOwnerTeamId=HOME, winningPlayerId=1, losingPlayerId=2)])
+        self.assertIsNone(restart_event(ev, 0, True))
+
+    def test_faceoff_with_situation_found_after_dead_events(self):
+        ev = events([pen(1, 1, "05:00", AWAY, 7, sit="1560"), play(2, "stoppage", 1, "05:00", "1460"),
+                     fo(3, 1, "05:00", "1451")])
+        self.assertIs(restart_event(ev, 0, True), ev[2])
 
 
 if __name__ == "__main__":
