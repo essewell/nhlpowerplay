@@ -66,42 +66,15 @@ test("untilNextDaily edge: exactly midnight starts a full new day", () => {
   assert.deepEqual(untilNextDaily(new Date("2099-03-03T08:00:00Z")), { h: 24, m: 0 });
 });
 
-// DST days: the expected length comes from the tz database's own UTC offsets at the two midnights,
-// so the test checks the countdown against whatever rules this Node/ICU build carries (tz data
-// changes, e.g. British Columbia's time legislation, must not break CI). Logged for visibility.
-function vancouverOffsetMinutes(at: Date): number {
-  const name = new Intl.DateTimeFormat("en-US", { timeZone: "America/Vancouver", timeZoneName: "longOffset" })
-    .formatToParts(at).find((p) => p.type === "timeZoneName")?.value ?? "GMT";
-  const m = /GMT([+-])(\d{2}):(\d{2})/.exec(name);
-  return m === null ? 0 : (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3]));
-}
-function expectedDayLength(midnightUtc: Date): { h: number; m: number } {
-  const startOffset = vancouverOffsetMinutes(midnightUtc);
-  // Probe 26 h later (always past the next midnight) for the next day's offset.
-  const endOffset = vancouverOffsetMinutes(new Date(midnightUtc.getTime() + 26 * 3_600_000));
-  const minutes = 24 * 60 + (startOffset - endOffset);
-  return { h: Math.floor(minutes / 60), m: minutes % 60 };
-}
-
-test("untilNextDaily edge: spring-forward Sunday matches the tz database (23 h where DST applies)", () => {
-  const midnight = new Date("2027-03-14T08:00:00Z"); // 00:00 PST, second Sunday of March 2027
-  const expected = expectedDayLength(midnight);
-  console.log(`tz ${process.versions.tz}: 2027-03-14 Vancouver day = ${expected.h}h${expected.m}m`);
-  assert.deepEqual(untilNextDaily(midnight), expected);
-  assert.ok(expected.h === 23 || expected.h === 24, "a spring day is 23 h (DST) or 24 h (no DST)");
+// DST days use 2024 transitions, which every tz release agrees on. Future Pacific rules differ between
+// tz releases (CI's Node and this PC disagree about 2026-11-01), and the countdown simply follows the
+// runtime's own tz data, which is the browser's in production.
+test("untilNextDaily edge: spring-forward day (2024-03-10) is 23 hours long", () => {
+  assert.deepEqual(untilNextDaily(new Date("2024-03-10T08:00:00Z")), { h: 23, m: 0 }); // 00:00 PST
 });
 
-test("untilNextDaily edge: fall-back Sunday matches the tz database (25 h where DST applies)", () => {
-  const midnight = new Date("2026-11-01T07:00:00Z"); // 00:00 PDT, first Sunday of November 2026
-  const expected = expectedDayLength(midnight);
-  console.log(`tz ${process.versions.tz}: 2026-11-01 Vancouver day = ${expected.h}h${expected.m}m`);
-  assert.deepEqual(untilNextDaily(midnight), expected);
-  assert.ok(expected.h === 25 || expected.h === 24, "a fall day is 25 h (DST) or 24 h (no DST)");
-});
-
-test("untilNextDaily edge: a DST-change day in a year every tz build agrees on is not 24 h", () => {
-  // 2024-11-03 was a real Pacific fall-back day in every tz release.
-  assert.deepEqual(untilNextDaily(new Date("2024-11-03T07:00:00Z")), { h: 25, m: 0 });
+test("untilNextDaily edge: fall-back day (2024-11-03) is 25 hours long", () => {
+  assert.deepEqual(untilNextDaily(new Date("2024-11-03T07:00:00Z")), { h: 25, m: 0 }); // 00:00 PDT
 });
 
 test("streakText: counts shown, no history falls back to the prompt", () => {
