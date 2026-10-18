@@ -6,3 +6,9 @@ __pycache__/
 *.pyc
 .env*
 !.env.example
+
+# Pipeline working data (Cowork-owned; never committed). Export JSON is synced into apps/web/public/data.
+data-pipeline/data/raw/
+data-pipeline/data/powerplay.db
+data-pipeline/data/*.log
+data-pipeline/data/run_status.json

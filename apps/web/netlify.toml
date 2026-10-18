@@ -1,0 +1,14 @@
+# Netlify build for apps/web (Next.js App Router) in the pnpm monorepo.
+# Site: powerplay-game. Base directory in the Netlify UI: apps/web (this file is read from there).
+# pnpm resolves the workspace root (pnpm-workspace.yaml) from here, so workspace packages install too.
+# The Next.js runtime (@netlify/plugin-nextjs) is added automatically; do not pin it.
+
+[build]
+  command = "pnpm run build"   # prebuild: no synthetic fixtures; postbuild: same check over .next
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "24"          # scripts run .ts natively (Node >= 22.18); matches .nvmrc and CI
+  PNPM_VERSION = "10.4.1"      # matches packageManager in the root package.json
+
+# Deploy previews and branch deploys also get X-Robots-Tag: noindex from next.config.ts.
