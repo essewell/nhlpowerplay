@@ -87,11 +87,11 @@ test("edge: probabilities stay inside [0,1] at extreme inputs", () => {
 });
 
 test("edge: defender behind the passer adds no lane threat", () => {
-  assert.equal(laneThreat({ x: 60, y: 0 }, { x: 80, y: 0 }, [{ pos: { x: 50, y: 0 } }], 4), 0);
+  assert.deepEqual(laneThreat({ x: 60, y: 0 }, { x: 80, y: 0 }, [{ pos: { x: 50, y: 0 } }], 4), { ok: true, value: 0 });
 });
 
 test("edge: zero-length lane is safe", () => {
-  assert.equal(laneThreat({ x: 60, y: 0 }, { x: 60, y: 0 }, [{ pos: { x: 60, y: 0 } }], 4), 0);
+  assert.deepEqual(laneThreat({ x: 60, y: 0 }, { x: 60, y: 0 }, [{ pos: { x: 60, y: 0 } }], 4), { ok: true, value: 0 });
 });
 
 test("edge: corner mapping flips with goalie catching hand", () => {
@@ -108,7 +108,7 @@ test("zone factors average to 1 (calibration invariant)", () => {
 test("pct formatting", () => {
   assert.equal(pct(0.004), "<1%");
   assert.equal(pct(0.784), "78%");
-  assert.equal(distanceBucket(500), 5);
+  assert.deepEqual(distanceBucket(500), { ok: true, value: 5 });
 });
 
 // --- modes ---------------------------------------------------------------------
@@ -124,12 +124,14 @@ test("daily: schedule hit, deterministic fallback, bad date", () => {
 
 test("endless: no repeats within a pass, reproducible by seed, dedupes pool", () => {
   const pool = ["a", "b", "c", "d", "e", "a"];
-  const q1 = new EndlessQueue(pool, 42), q2 = new EndlessQueue(pool, 42);
+  const c1 = EndlessQueue.create(pool, 42), c2 = EndlessQueue.create(pool, 42);
+  assert.ok(c1.ok && c2.ok);
+  const q1 = c1.value, q2 = c2.value;
   const pass1 = Array.from({ length: 5 }, () => q1.next());
-  assert.equal(new Set(pass1).size, 5);
+  assert.equal(new Set(pass1.map((r) => (r.ok ? r.value : r.error))).size, 5);
   assert.deepEqual(pass1, Array.from({ length: 5 }, () => q2.next()));
   assert.equal(q1.size, 5);
-  assert.throws(() => new EndlessQueue([], 1), RangeError);
+  assert.equal(EndlessQueue.create([], 1).ok, false);
 });
 
 test("prng and hash are stable", () => {
