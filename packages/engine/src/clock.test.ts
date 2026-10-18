@@ -15,6 +15,8 @@ const P = PERIOD_LENGTH_S;
 
 const pen = (id: number, side: Side, kind: PenaltyKind, expiresAtS: number | null,
   durationS: number = PENALTY_S[kind]): Penalty => ({ id, side, kind, expiresAtS, durationS });
+const coin = (id: number, side: Side, expiresAtS: number | null, kind: PenaltyKind = "minor"): Penalty =>
+  ({ ...pen(id, side, kind, expiresAtS), coincidental: true });
 
 function val<T>(r: Result<T>): T {
   if (!r.ok) assert.fail(`expected ok, got error: ${r.error}`);
@@ -435,4 +437,58 @@ test("maxPpStrength edge: invalid clock or too many active penalties is an error
 test("maxPpStrength edge: no power play returns the current strength", () => {
   assert.equal(val(maxPpStrength([], false, P2(300), REG)), 5);
   assert.equal(val(maxPpStrength([pen(1, "pp", "minor", abs2(400))], false, P2(300), REG)), 4);
+});
+
+// --- coincidental penalties (NHL Rule 19.1 / 16.2) ---------------------------------
+test("coincidental: Table 12 G4 shape - goal releases the regular minor, not the coincidental one with less time left", () => {
+  const ps = [coin(1, "pk", 160), coin(2, "pp", 160), pen(3, "pk", "minor", 220)];
+  assert.equal(ppActive(ps), true);
+  assert.deepEqual(byId(releaseOnGoal(ps, 100)), [coin(1, "pk", 160), coin(2, "pp", 160)]);
+});
+test("coincidental: pair + one PK minor is 4v3, goal returns it to 4v4 (no advantage), pair stays on the clock", () => {
+  const ps = [coin(1, "pk", 160), coin(2, "pp", 160), pen(3, "pk", "minor", 220)];
+  assert.deepEqual(val(strengthOf(ps, false, 1, REG)), { pp: 4, pk: 3 });
+  const after = releaseOnGoal(ps, 100);
+  assert.deepEqual(val(strengthOf(after, false, 1, REG)), { pp: 4, pk: 4 });
+  assert.equal(ppActive(after), false);
+  assert.equal(ppEndS(after), null);
+  assert.deepEqual(releaseOnGoal(after, 110), after);
+});
+test("coincidental: pair alone is not a power play; strength is 4v4", () => {
+  const ps = [coin(1, "pk", 160), coin(2, "pp", 160)];
+  assert.equal(ppActive(ps), false);
+  assert.equal(ppEndS(ps), null);
+  assert.deepEqual(val(strengthOf(ps, false, 1, REG)), { pp: 4, pk: 4 });
+});
+test("coincidental: only coincidental PK seats on a PP -> nothing to release", () => {
+  const ps = [coin(1, "pk", 160), coin(3, "pk", 200)];
+  assert.equal(ppActive(ps), true);
+  assert.deepEqual(releaseOnGoal(ps, 100), ps);
+});
+test("coincidental: pair + major -> major stays, coincidental stays", () => {
+  const ps = [coin(1, "pk", 160), coin(2, "pp", 160), pen(3, "pk", "major", 400)];
+  assert.deepEqual(releaseOnGoal(ps, 100), ps);
+});
+test("coincidental: a queued regular minor is promoted when the regular one is released; ties by lowest id", () => {
+  const ps = [coin(1, "pk", 160), coin(2, "pp", 160), pen(3, "pk", "minor", 200), pen(4, "pk", "minor", null)];
+  assert.deepEqual(byId(releaseOnGoal(ps, 100)), [coin(1, "pk", 160), coin(2, "pp", 160), pen(4, "pk", "minor", 220)]);
+  const tie = [coin(1, "pk", 200), coin(2, "pp", 200), pen(9, "pk", "minor", 200), pen(5, "pk", "minor", 200)];
+  assert.deepEqual(byId(releaseOnGoal(tie, 100)).map((p) => p.id), [1, 2, 9]);
+});
+test("coincidental: a coincidental double minor is not cut by a goal", () => {
+  const ps = [coin(1, "pk", 400, "double_minor"), coin(2, "pp", 400, "double_minor"), pen(3, "pk", "minor", 300)];
+  assert.deepEqual(byId(releaseOnGoal(ps, 100)), [coin(1, "pk", 400, "double_minor"), coin(2, "pp", 400, "double_minor")]);
+});
+test("coincidental: seats expire like any penalty; ppEndS and maxPpStrength count them", () => {
+  const ps = [coin(1, "pk", 160), coin(2, "pp", 160), pen(3, "pk", "minor", 220)];
+  assert.equal(ppEndS(ps), 220);
+  assert.equal(val(maxPpStrength(ps, false, { period: 1, elapsedS: 100 }, REG)), 5);
+  assert.deepEqual(expireUpTo(ps, 160, true), [pen(3, "pk", "minor", 220)]);
+});
+test("coincidental: releaseOnGoal does not mutate its input and keeps the flag", () => {
+  const ps = freeze([coin(1, "pk", 160), coin(2, "pp", 160), pen(3, "pk", "minor", 220)]);
+  const snapshot = JSON.stringify(ps);
+  const out = releaseOnGoal(ps, 100);
+  assert.equal(JSON.stringify(ps), snapshot);
+  assert.equal(out.every((p) => p.coincidental === true), true);
 });

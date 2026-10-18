@@ -12,7 +12,7 @@ import {
   ALL_FIXTURES, fiveOnFour, fiveSecondsLeft, fourOnThreePpPenalty, regOtPpPenalty, synthRates, playoffOt, regOtFourOnThree, sixOnFourGoaliePulled,
   staggeredFiveOnThree, thirdPenaltyQueued, type FixtureOpts,
 } from "./sim-fixtures.ts";
-import type { Call, CallOption, RunEvent, RunInput, RunState } from "./sim-types.ts";
+import type { Call, CallOption, Penalty, RunEvent, RunInput, RunState } from "./sim-types.ts";
 import { applyCall, autoPlay, initRun, legalCalls, replay, type Policy } from "./sim.ts";
 
 function val<T>(r: Result<T>): T {
@@ -147,6 +147,16 @@ test("initRun edge: no power play, bad game type, bad clock, bad seed, unknown f
   isErr(initRun({ ...i, clock: { period: 5, elapsedS: 0 } }));
   for (const seed of [-1, 1.5, 2 ** 32, NaN]) isErr(initRun({ ...i, seed }), /seed/);
   isErr(initRun({ ...i, settings: { ...i.settings, formation: "box" as unknown as "umbrella" } }), /formation/);
+});
+test("initRun edge: a coincidental pair alone is not a power play; a non-boolean flag is rejected", () => {
+  const i = fiveOnFour();
+  const now = val(absS(i.clock, i.gameType));
+  const pair: Penalty[] = [
+    { id: 1, side: "pk", kind: "minor", expiresAtS: now + 60, durationS: 120, coincidental: true },
+    { id: 2, side: "pp", kind: "minor", expiresAtS: now + 60, durationS: 120, coincidental: true },
+  ];
+  isErr(initRun({ ...i, penalties: pair, pp: { skaters: i.pp.skaters.slice(0, 4) }, pk: { ...i.pk, skaters: i.pk.skaters.slice(0, 4) } }), /power play/);
+  isErr(initRun({ ...i, penalties: [{ ...pair[0], coincidental: "yes" } as unknown as Penalty] }), /coincidental/);
 });
 test("initRun edge: penalty that already expired is rejected", () => {
   const i = fiveOnFour();

@@ -21,6 +21,13 @@ export interface Penalty {
   expiresAtS: number | null;
   /** Full length in seconds; a queued penalty starts with this when promoted. */
   durationS: number;
+  /**
+   * NHL Rule 19.1: one minor per team at a stoppage with nothing else on the clocks, both served at
+   * 4v4 without substitution. The seat is a skater down on its side like any other penalty, but a
+   * goal never releases it (Rule 16.2, "except when coincidental penalties are being served"; Table 12
+   * example G4). Absent means false.
+   */
+  coincidental?: boolean;
 }
 
 /** NHL API gameType: 2 = regular season, 3 = playoffs. */

@@ -209,6 +209,27 @@ test("parseScenario: extended shape with penalties, goalie_pulled and bench", ()
   val(parseScenario(sc));
   val(parseScenarioStrict(sc));
 });
+test("parseScenario: coincidental pair + one PK minor (4v3) accepted; field must be a boolean", () => {
+  const sc = scenario();
+  sc.state.strength = "4v3";
+  sc.pp.skaters = sc.pp.skaters.slice(0, 4);
+  sc.pk.skaters = sc.pk.skaters.slice(0, 3);
+  sc.state.penalties = [
+    { side: "pk", player_id: null, kind: "minor", remaining_s: 60, queued: false, coincidental: true },
+    { side: "pp", player_id: null, kind: "minor", remaining_s: 60, queued: false, coincidental: true },
+    { side: "pk", player_id: null, kind: "minor", remaining_s: 120, queued: false },
+  ];
+  sc.state.goalie_pulled = false;
+  sc.pp.bench = [skater(900006, PP_TEAM, 30)];
+  const s = val(parseScenario(sc));
+  assert.equal(s.state.penalties?.[0]?.coincidental, true);
+  assert.equal(s.state.penalties?.[2]?.coincidental, undefined);
+  for (const bad of ["yes", 1, null]) {
+    const b = structuredClone(sc);
+    b.state.penalties[0].coincidental = bad;
+    assert.match(errOf(parseScenario(b)), /coincidental/);
+  }
+});
 test("parseScenario edge: raw mined segment shape is rejected", () => {
   const raw = { game_id: 2031030101, game_type: 3, period: 3, start_t: 100, strength: "5v4", pp_remaining_s: 120, shots: [] };
   assert.match(errOf(parseScenario(raw)), /id: /);

@@ -65,8 +65,9 @@ export function synthGoalie(): Goalie {
 /** Absolute game second of a regulation-or-earlier clock (P1..P3). O(1). */
 const regAbs = (period: number, elapsedS: number): number => (period - 1) * PERIOD_LENGTH_S + elapsedS;
 
-function pen(id: number, kind: PenaltyKind, expiresAtS: number | null, side: "pp" | "pk" = "pk"): Penalty {
-  return { id, side, kind, expiresAtS, durationS: PENALTY_S[kind] };
+function pen(id: number, kind: PenaltyKind, expiresAtS: number | null, side: "pp" | "pk" = "pk",
+  coincidental = false): Penalty {
+  return { id, side, kind, expiresAtS, durationS: PENALTY_S[kind], ...(coincidental ? { coincidental: true } : {}) };
 }
 
 interface Spec {
@@ -181,9 +182,24 @@ export function regOtPpPenalty(o: FixtureOpts = {}): RunInput {
     goaliePulled: false, pp: 5, pk: 3 }, o);
 }
 
+/**
+ * 4v3 with a Rule 19.1 coincidental pair (one minor each side, 1:00 left) plus a regular PK minor with
+ * 2:00 left. A goal releases the regular minor, not the coincidental PK seat that has less time left
+ * (Table 12 example G4), leaving 4v4 until the pair expires. The 5th PP skater is the bench skater.
+ */
+export const COINCIDENTAL_LEFT_S = 60;
+export function coincidentalPair(o: FixtureOpts = {}): RunInput {
+  const t = regAbs(2, 400);
+  return build({ id: "coincidental", gameType: REG, clock: { period: 2, elapsedS: 400 }, score: { pp: 1, pk: 1 },
+    penalties: [pen(1, "minor", t + COINCIDENTAL_LEFT_S, "pk", true), pen(2, "minor", t + COINCIDENTAL_LEFT_S, "pp", true),
+      pen(3, "minor", t + PENALTY_S.minor)],
+    goaliePulled: false, pp: 5, pk: 3 }, o);
+}
+
 /** Every builder by name, for loops in tests and fuzzers. */
 export const ALL_FIXTURES: Readonly<Record<string, (o?: FixtureOpts) => RunInput>> = {
   fiveOnFour, staggeredFiveOnThree, doubleMinor, major, regOtFourOnThree, sixOnFourGoaliePulled,
   fiveSecondsLeft, playoffOt, thirdPenaltyQueued, fourOnThreePpPenalty, regOtPpPenalty,
+  coincidentalPair,
 };
 

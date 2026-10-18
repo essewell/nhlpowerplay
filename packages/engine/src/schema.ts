@@ -184,6 +184,8 @@ export const ScenarioPenalty = z.object({
   kind: z.enum(["minor", "double_minor", "major"]),
   remaining_s: PosInt,
   queued: z.boolean(),
+  /** NHL Rule 19.1 4v4 pair seat: counts as a skater down, never released by a goal. Absent = false. */
+  coincidental: z.boolean().optional(),
 }).refine((p) => p.remaining_s <= PENALTY_S[p.kind], { message: "remaining_s exceeds the penalty length", path: ["remaining_s"] });
 export type ScenarioPenalty = z.infer<typeof ScenarioPenalty>;
 

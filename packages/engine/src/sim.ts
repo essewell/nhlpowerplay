@@ -93,6 +93,7 @@ function penaltyProblem(p: unknown, now: number | null): string | null {
   if (p.side !== "pp" && p.side !== "pk") return `invalid penalty side ${String(p.side)}`;
   if (p.kind !== "minor" && p.kind !== "double_minor" && p.kind !== "major") return `invalid penalty kind ${String(p.kind)}`;
   if (!Number.isInteger(p.durationS) || (p.durationS as number) <= 0) return `invalid penalty duration ${String(p.durationS)}`;
+  if (p.coincidental !== undefined && typeof p.coincidental !== "boolean") return `invalid penalty coincidental flag ${String(p.coincidental)}`;
   if (p.expiresAtS !== null && !isNonNegInt(p.expiresAtS)) return `invalid penalty expiry ${String(p.expiresAtS)}`;
   if (now !== null && p.expiresAtS !== null && (p.expiresAtS as number) < now) {
     return `penalty ${String(p.id)} expiry ${String(p.expiresAtS)} is before the start (${now})`;

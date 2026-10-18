@@ -224,6 +224,23 @@ test("loadScenario edge: 5v3 with an explicit penalties list (one queued)", () =
   assert.equal(l.input.pk.skaters.length, 3);
 });
 
+test("loadScenario edge: coincidental flag is carried to the engine penalties (absent stays absent)", () => {
+  const sc = scenario((s) => {
+    s.state.strength = "4v3";
+    s.pp.skaters = s.pp.skaters.slice(0, 4);
+    s.pk.skaters = s.pk.skaters.slice(0, 3);
+    s.state.penalties = [
+      { ...pen("pk", "minor", 60), coincidental: true }, { ...pen("pp", "minor", 60), coincidental: true },
+      pen("pk", "minor", 120),
+    ];
+    s.state.goalie_pulled = false;
+    s.pp.bench = [sk(900007, PP_TEAM, 77)];
+  });
+  const l = val(loadScenario(sc, tables(), rates(), OPTS));
+  assert.deepEqual(l.input.penalties.map((p) => p.coincidental), [true, true, undefined]);
+  assert.equal("coincidental" in (l.input.penalties[2] ?? {}), false);
+});
+
 test("loadScenario edge: goalie_pulled absent with explicit penalties is inferred and flagged", () => {
   const sc = scenario((s) => { s.state.penalties = [pen("pk", "minor", 90)]; s.pp.bench = []; });
   const l = val(loadScenario(sc, tables(), rates(), OPTS));

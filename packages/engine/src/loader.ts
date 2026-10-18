@@ -151,6 +151,7 @@ function toEnginePenalties(ps: readonly ScenarioPenalty[], now: number): Penalty
     kind: p.kind,
     expiresAtS: p.queued ? null : now + p.remaining_s,
     durationS: PENALTY_S[p.kind],
+    ...(p.coincidental === true ? { coincidental: true } : {}),
   }));
 }
 

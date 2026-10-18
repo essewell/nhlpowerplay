@@ -167,8 +167,8 @@ export function expireUpTo(penalties: readonly Penalty[], abs: number, inclusive
 
 /**
  * A power-play goal at `abs`. Only applies while ppActive (no release at even strength, e.g.
- * 4-on-4). The PK-side active minor or double minor with the earliest expiry (ties: lowest id)
- * is released: a minor ends; a double minor with more than one minor's length left is cut to one
+ * 4-on-4). The PK-side active non-coincidental minor or double minor with the earliest expiry (ties:
+ * lowest id) is released (NHL Rule 16.2: coincidental penalties being served are never released): a minor ends; a double minor with more than one minor's length left is cut to one
  * minor from now, otherwise it ends. Majors are never released. A freed slot is filled from the PK
  * queue starting at `abs`. Returns the input contents unchanged when nothing is releasable. O(K).
  */
@@ -176,7 +176,7 @@ export function releaseOnGoal(penalties: readonly Penalty[], abs: number): Penal
   if (!ppActive(penalties)) return [...penalties];
   let target: Penalty | undefined;
   for (const p of penalties) {
-    if (p.side !== "pk" || p.expiresAtS === null || p.kind === "major") continue;
+    if (p.side !== "pk" || p.expiresAtS === null || p.kind === "major" || p.coincidental === true) continue;
     if (target === undefined || target.expiresAtS === null || p.expiresAtS < target.expiresAtS
       || (p.expiresAtS === target.expiresAtS && p.id < target.id)) target = p;
   }
