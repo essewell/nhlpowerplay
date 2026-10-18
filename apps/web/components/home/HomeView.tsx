@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { useState } from "react";
 import { t } from "../../lib/copy.ts";
-import { splitWordmark, streakText, untilNextDaily } from "../../lib/home-logic.ts";
+import { splitWordmark, streakLine, untilNextDaily } from "../../lib/home-logic.ts";
 import { playHref } from "../../lib/results-logic.ts";
 import { browserStore } from "../../lib/run/browser.ts";
+import { readDailyHistory } from "../../lib/run/persistence.ts";
 import { dailyStatus } from "../../lib/run/plan.ts";
 import type { SeasonRange } from "../../lib/site.ts";
 import { Card } from "../ui/Card.tsx";
@@ -62,6 +63,13 @@ export function HomeView({ seasonRange }: { seasonRange?: SeasonRange }) {
   // only drawn after the client load, so there is no hydration mismatch to guard).
   const [now] = useState(() => new Date());
   const [wordA, wordB] = splitWordmark(t("home.wordmark"));
+  const store = browserStore();
+  const status = daily.status === "ready" ? dailyStatus(store, daily.value.date) : null;
+  const history = readDailyHistory(store);
+  const streak =
+    daily.status === "ready"
+      ? streakLine(history.ok ? history.value : [], daily.value.date, status === "done")
+      : null;
   const endlessBody =
     seasonRange === undefined
       ? t("home.tile.endless.body.noRange")
@@ -101,7 +109,7 @@ export function HomeView({ seasonRange }: { seasonRange?: SeasonRange }) {
       {daily.status === "ready" ? (
         <DailyCard
           daily={daily.value}
-          status={dailyStatus(browserStore(), daily.value.date)}
+          status={status ?? "fresh"}
           next={untilNextDaily(now)}
         />
       ) : null}
@@ -118,8 +126,7 @@ export function HomeView({ seasonRange }: { seasonRange?: SeasonRange }) {
         >
           {t("home.howItWorks.link")}
         </Link>
-        {/* The persistence layer keeps only the latest Daily run, so there is no history to count yet. */}
-        <div className="text-text-muted">{streakText(null)}</div>
+        {daily.status === "ready" ? <div className="text-text-muted">{streak}</div> : null}
       </div>
     </main>
   );

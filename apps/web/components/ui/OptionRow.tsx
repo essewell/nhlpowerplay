@@ -17,6 +17,8 @@ type Props = Lead & {
   valueLabel: string;
   /** Static tag beside the name, e.g. <EstimateTag />. Must not be interactive: it sits inside the row button. */
   tag?: ReactNode;
+  /** Accessible name for the row button; defaults to its text content (badge + name + percentage). */
+  ariaLabel?: string;
   selected?: boolean;
   disabled?: boolean;
   onSelect?: () => void;
@@ -36,6 +38,7 @@ export function OptionRow({
   value,
   valueLabel,
   tag,
+  ariaLabel,
   selected,
   disabled,
   onSelect,
@@ -89,6 +92,7 @@ export function OptionRow({
       type="button"
       onClick={onSelect}
       disabled={disabled}
+      aria-label={ariaLabel}
       aria-pressed={selected}
       className={cx(frame, "disabled:cursor-not-allowed disabled:opacity-60", FOCUS_RING)}
     >

@@ -1,6 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { clockLeftText, formatMmSs, splitWordmark, stageLine, streakText, strengthText, untilNextDaily } from "./home-logic.ts";
+import { vancouverDate } from "./daily.ts";
+import {
+  clockLeftText, dailyStreak, formatMmSs, previousDate, splitWordmark, stageLine, streakLine, streakText, strengthText,
+  untilNextDaily,
+} from "./home-logic.ts";
 
 test("clockLeftText: regulation period, elapsed 600 of 1200 -> 10:00 left", () => {
   assert.equal(clockLeftText(2, 600, 3), "10:00 left");
@@ -79,9 +83,8 @@ test("untilNextDaily edge: fall-back day (2024-11-03) is 25 hours long", () => {
   assert.deepEqual(untilNextDaily(new Date("2024-11-03T07:00:00Z")), { h: 25, m: 0 }); // 00:00 PDT
 });
 
-test("streakText: counts shown, no history falls back to the prompt", () => {
+test("streakText: counts shown, zero/invalid falls back to the prompt", () => {
   assert.equal(streakText(4), "4-day streak");
-  assert.equal(streakText(null), "Start a streak: play today's Daily.");
   assert.equal(streakText(0), "Start a streak: play today's Daily.");
   assert.equal(streakText(-2), "Start a streak: play today's Daily.");
   assert.equal(streakText(1.5), "Start a streak: play today's Daily.");
@@ -92,4 +95,67 @@ test("splitWordmark: two-part name splits at the second capital; others stay who
   assert.deepEqual(splitWordmark("Power"), ["Power", ""]);
   assert.deepEqual(splitWordmark(""), ["", ""]);
   assert.deepEqual(splitWordmark("POWERPLAY"), ["P", "OWERPLAY"], "all caps splits after the first letter");
+});
+
+const NONE = "Start a streak: play today's Daily.";
+
+test("dailyStreak: happy path counts consecutive days ending today", () => {
+  assert.equal(dailyStreak(["2024-05-01", "2024-05-02", "2024-05-03"], "2024-05-03"), 3);
+});
+
+test("dailyStreak edge: a gap day breaks the streak", () => {
+  assert.equal(dailyStreak(["2024-05-01", "2024-05-03", "2024-05-04"], "2024-05-04"), 2);
+});
+
+test("dailyStreak edge: today unplayed but yesterday played keeps the streak alive", () => {
+  assert.equal(dailyStreak(["2024-05-01", "2024-05-02"], "2024-05-03"), 2);
+});
+
+test("dailyStreak edge: last played two days ago is a dead streak", () => {
+  assert.equal(dailyStreak(["2024-05-01", "2024-05-02"], "2024-05-04"), 0);
+});
+
+test("dailyStreak edge: duplicates and unsorted input count once", () => {
+  assert.equal(dailyStreak(["2024-05-03", "2024-05-02", "2024-05-03", "2024-05-02"], "2024-05-03"), 2);
+});
+
+test("dailyStreak edge: first ever play is a 1-day streak; empty history is 0", () => {
+  assert.equal(dailyStreak(["2024-05-03"], "2024-05-03"), 1);
+  assert.equal(dailyStreak([], "2024-05-03"), 0);
+});
+
+test("dailyStreak edge: streak crosses month and year boundaries and leap day", () => {
+  assert.equal(dailyStreak(["2023-12-31", "2024-01-01"], "2024-01-01"), 2);
+  assert.equal(dailyStreak(["2024-02-28", "2024-02-29", "2024-03-01"], "2024-03-01"), 3);
+});
+
+test("dailyStreak edge: dates after today are ignored; malformed today yields 0", () => {
+  assert.equal(dailyStreak(["2024-05-04"], "2024-05-03"), 0);
+  assert.equal(dailyStreak(["2024-05-03"], "not-a-date"), 0);
+});
+
+test("dailyStreak edge: rollover at Vancouver midnight, not UTC midnight", () => {
+  const played = ["2024-05-02"];
+  // 2024-05-03T06:59Z is 23:59 PDT on May 2 -> still the same day, today played.
+  assert.equal(dailyStreak(played, vancouverDate(new Date("2024-05-03T06:59:00Z"))), 1);
+  // One minute later it is May 3 in Vancouver: May 3 not played yet, May 2 keeps the streak.
+  assert.equal(dailyStreak(played, vancouverDate(new Date("2024-05-03T07:00:00Z"))), 1);
+  // A day later with nothing new played the streak is gone.
+  assert.equal(dailyStreak(played, vancouverDate(new Date("2024-05-04T07:00:00Z"))), 0);
+});
+
+test("previousDate: month, year, leap boundaries; malformed is null", () => {
+  assert.equal(previousDate("2024-03-01"), "2024-02-29");
+  assert.equal(previousDate("2024-01-01"), "2023-12-31");
+  assert.equal(previousDate("nope"), null);
+});
+
+test("streakLine: shows the count, and the prompt only when streak is 0 and today is unplayed", () => {
+  assert.equal(streakLine(["2024-05-02", "2024-05-03"], "2024-05-03", true), "2-day streak");
+  assert.equal(streakLine([], "2024-05-03", false), NONE);
+  assert.equal(streakLine(["2024-05-01"], "2024-05-03", false), NONE);
+});
+
+test("streakLine edge: today played with lost history never shows the prompt", () => {
+  assert.equal(streakLine([], "2024-05-03", true), "1-day streak");
 });

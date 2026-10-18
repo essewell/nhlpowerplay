@@ -7,6 +7,7 @@
  * UI thread only.
  */
 import { useMemo, useState } from "react";
+import { pct } from "@powerplay/engine/likelihood.ts";
 import type { Call } from "@powerplay/engine/sim-types.ts";
 import { Button } from "../ui/Button.tsx";
 import { OptionRow } from "../ui/OptionRow.tsx";
@@ -21,17 +22,26 @@ import { scoreboardModel } from "../../lib/play/scoreboard.ts";
 import { fillCopy, pctLabel, playPctLabel, PLAY_COPY, type PlayCopyKey } from "../../lib/play/strings.ts";
 import { Scoreboard } from "./Scoreboard.tsx";
 
+/** Screen-reader name for a call button: "Alpha, 11, 50% wins the draw". Skips empty parts. O(1). */
+function callLabel(parts: readonly (string | number | null)[], p: number, word: string): string {
+  const named = parts.filter((x): x is string | number => x !== null && x !== "");
+  return `${named.join(", ")}, ${pct(p)} ${word}`;
+}
+
 interface Props {
   snapshot: RunSnapshot;
   onCall: (call: Call) => void;
+  /** Outcome of the last call (OutcomeTicker), shown under the scoreboard. */
+  ticker?: React.ReactNode;
 }
 
-function Shell({ snapshot, title, body, children }: { snapshot: RunSnapshot; title: string; body: string; children: React.ReactNode }) {
+function Shell({ snapshot, title, body, ticker, children }: { snapshot: RunSnapshot; title: string; body: string; ticker?: React.ReactNode; children: React.ReactNode }) {
   const board = scoreboardModel(snapshot);
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[430px] flex-col">
       <div className="flex flex-col gap-2.5 px-4 pb-2.5 pt-3.5">
         {board.ok ? <Scoreboard teams={snapshot.scenario.teams} model={board.value} /> : null}
+        {ticker}
       </div>
       <section
         aria-busy={snapshot.busy}
@@ -47,7 +57,7 @@ function Shell({ snapshot, title, body, children }: { snapshot: RunSnapshot; tit
   );
 }
 
-export function FaceoffSheet({ snapshot, onCall }: Props) {
+export function FaceoffSheet({ snapshot, onCall, ticker }: Props) {
   const [takerId, setTakerId] = useState<number | null>(null);
   const [target, setTarget] = useState<string | null>(null);
   const faceoff = useMemo(() => groupOptions(snapshot.options).faceoff, [snapshot.options]);
@@ -57,7 +67,7 @@ export function FaceoffSheet({ snapshot, onCall }: Props) {
   const targets = Object.keys(FACEOFF_TARGET_COPY) as (keyof typeof FACEOFF_TARGET_COPY)[];
 
   return (
-    <Shell snapshot={snapshot} title={t("faceoff.title")} body={t("faceoff.body")}>
+    <Shell snapshot={snapshot} title={t("faceoff.title")} body={t("faceoff.body")} ticker={ticker}>
       {takers.length === 0 ? (
         <StateCard kind="error" title={t("faceoff.error.title")} />
       ) : (
@@ -75,6 +85,7 @@ export function FaceoffSheet({ snapshot, onCall }: Props) {
                   name={t("faceoff.row.title", { lastName: who.lastName })}
                   value={tk.p}
                   valueLabel={pctLabel("faceoff.row.pct")}
+                  ariaLabel={callLabel([who.lastName, who.number], tk.p, pctLabel("faceoff.row.pct"))}
                   selected={takerId === tk.takerId}
                   disabled={snapshot.busy}
                   onSelect={() => setTakerId(tk.takerId)}
@@ -87,10 +98,14 @@ export function FaceoffSheet({ snapshot, onCall }: Props) {
               {t("faceoff.target.label")}
             </h2>
             <div className="grid grid-cols-3 gap-1.5">
-              {targets.map((tg) => (
+              {targets.map((tg) => {
+                const option = takerId === null ? null : findFaceoff(faceoff, takerId, tg);
+                const name = t(FACEOFF_TARGET_COPY[tg]);
+                return (
                 <button
                   key={tg}
                   type="button"
+                  aria-label={option === null ? name : callLabel([name], option.p, pctLabel("faceoff.target.pct"))}
                   aria-pressed={target === tg}
                   disabled={snapshot.busy}
                   onClick={() => setTarget(tg)}
@@ -101,9 +116,10 @@ export function FaceoffSheet({ snapshot, onCall }: Props) {
                     FOCUS_RING,
                   )}
                 >
-                  {t(FACEOFF_TARGET_COPY[tg])}
+                  {name}
                 </button>
-              ))}
+                );
+              })}
             </div>
           </div>
           <div className="mt-auto">
@@ -142,7 +158,7 @@ const BREAKOUT_ROWS: Record<string, MethodRow> = {
 };
 
 /** Zone entry (kind "entry") or breakout (kind "breakout"): one tap sends the call. */
-export function MethodSheet({ snapshot, onCall, kind }: Props & { kind: "entry" | "breakout" }) {
+export function MethodSheet({ snapshot, onCall, kind, ticker }: Props & { kind: "entry" | "breakout" }) {
   const grouped = useMemo(() => groupOptions(snapshot.options), [snapshot.options]);
   const rows = kind === "entry" ? ENTRY_ROWS : BREAKOUT_ROWS;
   const options = kind === "entry" ? grouped.zoneEntry : grouped.breakout;
@@ -151,7 +167,7 @@ export function MethodSheet({ snapshot, onCall, kind }: Props & { kind: "entry" 
   const body = kind === "entry" ? t("entry.body") : fillCopy("breakout.body");
 
   return (
-    <Shell snapshot={snapshot} title={title} body={body}>
+    <Shell snapshot={snapshot} title={title} body={body} ticker={ticker}>
       <div className="flex flex-col gap-1.5">
         {options.map((o, i) => {
           const method = o.call.method;
@@ -165,6 +181,7 @@ export function MethodSheet({ snapshot, onCall, kind }: Props & { kind: "entry" 
               sub={o.cutByClock ? fillCopy("play.cut") : text(row.subKey)}
               value={o.p}
               valueLabel={pctWord}
+              ariaLabel={callLabel([text(row.nameKey)], o.p, pctWord)}
               disabled={optionDisabled(o, snapshot.busy)}
               onSelect={() => onCall(o.call)}
             />

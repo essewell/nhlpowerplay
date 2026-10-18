@@ -63,14 +63,46 @@ export function untilNextDaily(now: Date): { h: number; m: number } {
   return { h: Math.floor(minutes / MINUTES_PER_HOUR), m: minutes % MINUTES_PER_HOUR };
 }
 
+const MS_PER_DAY = 24 * MINUTES_PER_HOUR * MS_PER_MINUTE;
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** The calendar day before `date` (YYYY-MM-DD); null if malformed. Pure calendar math in UTC, so no DST. O(1). */
+export function previousDate(date: string): string | null {
+  const m = ISO_DATE.exec(date);
+  if (m === null) return null;
+  const prev = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) - MS_PER_DAY);
+  return prev.toISOString().slice(0, 10);
+}
+
 /**
- * Streak line. `streak` is a count of consecutive played Daily dates; null means "no history to count"
- * (the persistence layer keeps only the latest Daily run today), which shows the "start a streak" prompt
- * instead of a made-up number. O(1).
+ * Consecutive finished-Daily dates ending today, or ending yesterday when today's is not played yet (the
+ * streak is still alive until the day rolls over). Order and duplicates in `played` do not matter;
+ * dates after `today` are ignored. O(n).
  */
-export function streakText(streak: number | null): string {
-  if (streak === null || !Number.isInteger(streak) || streak < 1) return t("home.streak.none");
+export function dailyStreak(played: readonly string[], today: string): number {
+  const set = new Set(played);
+  let day: string | null = set.has(today) ? today : previousDate(today);
+  let n = 0;
+  while (day !== null && set.has(day)) {
+    n += 1;
+    day = previousDate(day);
+  }
+  return n;
+}
+
+/** Streak copy: "{n}-day streak" for n >= 1, the "start a streak" prompt for anything else. O(1). */
+export function streakText(streak: number): string {
+  if (!Number.isInteger(streak) || streak < 1) return t("home.streak.none");
   return t("home.streak", { n: streak });
+}
+
+/**
+ * The Home footer line. A played Daily always counts today (even if history was lost), so the "start a
+ * streak" prompt shows only when the streak is 0 and today's Daily is not played. O(n).
+ */
+export function streakLine(played: readonly string[], today: string, todayPlayed: boolean): string {
+  const streak = dailyStreak(todayPlayed ? [...played, today] : played, today);
+  return streakText(streak);
 }
 
 /**

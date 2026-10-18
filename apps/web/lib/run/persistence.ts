@@ -3,6 +3,7 @@
  *   powerplay.v1.run.daily    StoredRun   latest Daily run (its `ended` flag is the "already played" lock)
  *   powerplay.v1.run.endless  StoredRun   latest Endless run
  *   powerplay.v1.endless.queue  QueueState  seed + how many scenarios were served (rebuilds EndlessQueue)
+ *   powerplay.v1.daily.history  string[]    dates (YYYY-MM-DD, America/Vancouver) of finished Dailies, for the streak
  * A StoredRun is the replay key: (scenarioId, seed, calls) -> sim.replay gives the exact state.
  *
  * Reads validate shape and return Result (a corrupt value is an explicit error, never a silent
@@ -17,6 +18,7 @@ import type { KeyValueStore } from "./store.ts";
 export const STORAGE_KEYS = {
   run: (mode: Mode): string => `powerplay.v1.run.${mode}`,
   queue: "powerplay.v1.endless.queue",
+  history: "powerplay.v1.daily.history",
 } as const;
 
 export interface StoredRun {
@@ -42,6 +44,8 @@ const CALL_TYPES: ReadonlySet<string> = new Set([
 const MAX_SERVED = 1_000_000;
 /** Upper bound on stored calls (engine MAX_CALLS_PER_RUN is far lower); stops a corrupt value hanging a replay. */
 const MAX_STORED_CALLS = 1_000;
+/** Finished-Daily dates kept for the streak; ~13 months, far beyond any streak a player can hold in view. */
+export const MAX_HISTORY_DATES = 400;
 
 const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null && !Array.isArray(x);
 const isUint32 = (x: unknown): x is number => typeof x === "number" && Number.isInteger(x) && x >= 0 && x <= MAX_UINT32;
@@ -88,7 +92,42 @@ export function readRun(store: KeyValueStore, mode: Mode): Result<StoredRun | nu
 
 /** false when the browser refused the write (the in-session copy is still kept by the store). */
 export function writeRun(store: KeyValueStore, run: StoredRun): boolean {
-  return store.set(STORAGE_KEYS.run(run.mode), JSON.stringify(run));
+  const saved = store.set(STORAGE_KEYS.run(run.mode), JSON.stringify(run));
+  // The Daily's "ended" write is the one moment a Daily counts as played, so the streak history is fed here.
+  if (run.mode === "daily" && run.ended && run.date !== null) recordDailyFinished(store, run.date);
+  return saved;
+}
+
+/**
+ * Finished-Daily dates, sorted ascending, deduplicated. Ok([]) when nothing is stored; Err when the stored
+ * value is unusable (the caller shows no streak rather than a made-up one). O(n log n), n <= MAX_HISTORY_DATES.
+ */
+export function readDailyHistory(store: KeyValueStore): Result<string[]> {
+  const raw = store.get(STORAGE_KEYS.history);
+  if (raw === null) return ok([]);
+  const json = parseJson(raw, STORAGE_KEYS.history);
+  if (!json.ok) return json;
+  const list = json.value;
+  if (!Array.isArray(list)) return err(`${STORAGE_KEYS.history}: not an array`);
+  const dates = new Set<string>();
+  for (const d of list) {
+    if (typeof d !== "string" || !isCalendarDate(d)) return err(`${STORAGE_KEYS.history}: bad date`);
+    dates.add(d);
+  }
+  return ok([...dates].sort());
+}
+
+/**
+ * Add `date` to the history (idempotent), keep the newest MAX_HISTORY_DATES. A corrupt stored history is
+ * replaced by just this date. false when the browser refused the write. O(n log n).
+ */
+export function recordDailyFinished(store: KeyValueStore, date: string): boolean {
+  if (!isCalendarDate(date)) return false;
+  const prior = readDailyHistory(store);
+  const dates = new Set(prior.ok ? prior.value : []);
+  dates.add(date);
+  const kept = [...dates].sort().slice(-MAX_HISTORY_DATES);
+  return store.set(STORAGE_KEYS.history, JSON.stringify(kept));
 }
 
 export function clearRun(store: KeyValueStore, mode: Mode): void {

@@ -42,9 +42,11 @@ interface Props {
   snapshot: RunSnapshot;
   resumed: boolean;
   onCall: (call: Call) => void;
+  /** Outcome of the last call (OutcomeTicker), shown between the chips and the rink. */
+  ticker?: React.ReactNode;
 }
 
-export function DecisionView({ snapshot, resumed, onCall }: Props) {
+export function DecisionView({ snapshot, resumed, onCall, ticker }: Props) {
   const [tab, setTab] = useState<TabId>("pass");
   const [showAllSpots, setShowAllSpots] = useState(false);
   const [pickingShot, setPickingShot] = useState(false);
@@ -109,6 +111,7 @@ export function DecisionView({ snapshot, resumed, onCall }: Props) {
           <Chip>{chipText}</Chip>
           {resumed ? <Chip>{t("pause.resume.banner")}</Chip> : null}
         </div>
+        {ticker}
       </div>
 
       <div className="px-5">

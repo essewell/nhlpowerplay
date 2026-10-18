@@ -29,7 +29,7 @@ export function DailyCard({ daily, status, next }: { daily: DailyInfo; status: D
         <div className="flex items-center justify-between">
           <div className="flex w-[90px] flex-col items-center gap-1">
             <div className={TEAM_CODE}>{sc.teams.pp}</div>
-            <div className="rounded-chip bg-pp px-2 py-0.5 text-xs font-semibold uppercase text-bg">
+            <div className="whitespace-nowrap rounded-chip bg-pp px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-bg">
               {t("home.daily.yourBench")}
             </div>
           </div>

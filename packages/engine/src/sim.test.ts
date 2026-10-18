@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { absS, strengthOf } from "./clock.ts";
 import {
-  CLEAR_REENTRY_MIN_S, FACEOFF_DOTS, MAX_CALLS_PER_RUN, OZ_SPOTS, SET_PLAYS, SHOT_OPTIONS, TIME,
+  CLEAR_REENTRY_MIN_S, ENTRY, FACEOFF_DOTS, MAX_CALLS_PER_RUN, OZ_SPOTS, SET_PLAYS, SHOT_OPTIONS, SKATE_SPEED_FPS, TIME,
 } from "./constants.ts";
 import { pkPositions, spotPos } from "./formation.ts";
 import { mulberry32 } from "./modes.ts";
@@ -211,7 +211,7 @@ test("legalCalls: skate duration is max(1, ceil(dist / speed))", () => {
   const opts = val(legalCalls(s, input));
   const far = findOption(opts, (c) => c.type === "skate" && c.to === "goal_line_left");
   const d = Math.sqrt((89 - 33) ** 2 + 15 ** 2);
-  assert.equal(far.durationS, Math.max(1, Math.ceil(d / 20)));
+  assert.equal(far.durationS, Math.max(1, Math.ceil(d / SKATE_SPEED_FPS)));
   assert.ok(far.durationS >= 2);
 });
 test("legalCalls: zone entry and breakout phases", () => {
@@ -228,7 +228,7 @@ test("legalCalls: entry odds use the carrier's multipliers", () => {
   const base = val(initRun(input));
   const ze = val(legalCalls({ ...base, phase: { kind: "zone_entry" }, carrier: { kind: "pp", id: 103 } }, input));
   const carry = findOption(ze, (c) => c.type === "zone_entry" && c.method === "carry");
-  const logit = Math.log(0.6 / 0.4) + Math.log(0.9); // Synth C puckControlMult 0.9
+  const logit = Math.log(ENTRY.CARRY_P / (1 - ENTRY.CARRY_P)) + Math.log(0.9); // Synth C puckControlMult 0.9
   assert.ok(Math.abs(carry.p - 1 / (1 + Math.exp(-logit))) < 1e-12);
 });
 test("legalCalls edge: ended phase is an error", () => {

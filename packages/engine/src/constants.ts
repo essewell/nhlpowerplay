@@ -176,8 +176,8 @@ export const PK = {
   SHIFT_K: 0.35,             // ASSUMPTION — tune: fraction of (puck - anchor) the whole shape slides toward the puck
   PRESSURE_GAP_FT: 6,        // ASSUMPTION — tune: the nearest defender sits this far from the puck, on the puck->net line
   FORMATION_4: "box",        // ASSUMPTION — tune: 4-man PK shape
-  CLEAR_P: 0.7,              // ASSUMPTION — tune: P(PK clears the zone | PK possession)
-  SH_CHANCE_P: 0.05,         // ASSUMPTION — tune: P(PK gets a shorthanded chance | PK possession)
+  CLEAR_P: 0.35,             // ASSUMPTION — tune (pacing target: PK clears are rare; <= 2 entries/run): P(PK clears the zone | PK possession)
+  SH_CHANCE_P: 0.02,         // ASSUMPTION — tune (pacing target: SH goal rate <= 3% of runs): P(PK gets a shorthanded chance | PK possession)
   SH_GOAL_P: 0.2,            // ASSUMPTION — tune: P(goal | shorthanded chance)
   EN_GOAL_P: 0.5,            // ASSUMPTION — tune: P(goal | PK shoots at an empty net)
   EN_CLEAR_GOAL_P: 0.08,     // ASSUMPTION — tune: P(a clear slides into the empty net)
@@ -195,24 +195,24 @@ export const OZ_BOUNDS = {
 
 /** Duration of each simulated event (integer s). All ASSUMPTION — tune. */
 export const TIME = {
-  PASS_S: 1,          // ASSUMPTION — tune: a pass
-  SHOT_S: 1,          // ASSUMPTION — tune: a shot to its outcome
+  PASS_S: 3,          // ASSUMPTION — tune (pacing target: >= 60% of PP time in-zone): a pass incl. repositioning
+  SHOT_S: 2,          // ASSUMPTION — tune (pacing target: in-zone share): a shot to its outcome
   FACEOFF_S: 2,       // ASSUMPTION — tune: a faceoff to possession
   LOOSE_S: 2,         // ASSUMPTION — tune: a loose-puck battle
-  PK_POSSESSION_S: 3, // ASSUMPTION — tune: PK holds the puck before clearing / chance
-  REGROUP_S: 12,      // ASSUMPTION — tune: PP retrieves a cleared puck and regroups in its own end
+  PK_POSSESSION_S: 2, // ASSUMPTION — tune (pacing target: short PK-possession loops): PK holds the puck before clearing / chance
+  REGROUP_S: 6,       // ASSUMPTION — tune (pacing target: short regroup loops): PP retrieves a cleared puck and regroups in its own end
   ENTRY_S: 3,         // ASSUMPTION — tune: a zone entry attempt
   SETUP_S: 4,         // ASSUMPTION — tune: set up in formation after a clean entry
-  BREAKOUT_S: 4,      // ASSUMPTION — tune: a breakout attempt
+  BREAKOUT_S: 3,      // ASSUMPTION — tune (pacing target: short regroup loops): a breakout attempt
 } as const;
-export const SKATE_SPEED_FPS = 20; // ASSUMPTION — tune: carry speed in ft/s (with the puck, under pressure)
+export const SKATE_SPEED_FPS = 10; // ASSUMPTION — tune (pacing target: in-zone share): carry speed in ft/s (with the puck, under pressure)
 /** Minimum time for the PP to get back in after a clear. Derived from TIME (ASSUMPTION — tune). */
 export const CLEAR_REENTRY_MIN_S = TIME.REGROUP_S + TIME.ENTRY_S + TIME.SETUP_S;
 
 /** Who recovers a contested puck. All ASSUMPTION — tune. */
 export const RECOVERY = {
-  PASS_INTERCEPT_P: 0.5, // ASSUMPTION — tune: P(PK picks off | failed pass) (else loose)
-  LOOSE_PP_P: 0.45,      // ASSUMPTION — tune: P(PP wins a loose puck)
+  PASS_INTERCEPT_P: 0.4, // ASSUMPTION — tune (pacing target: fewer PK possessions): P(PK picks off | failed pass) (else loose)
+  LOOSE_PP_P: 0.55,      // ASSUMPTION — tune (pacing target: fewer PK possessions): P(PP wins a loose puck)
   BLOCKED_PP_P: 0.35,    // ASSUMPTION — tune: P(PP recovers its own blocked shot)
   MISS_PP_P: 0.4,        // ASSUMPTION — tune: P(PP recovers its own missed shot (end-boards rim))
   SAVE_FREEZE_P: 0.5,    // ASSUMPTION — tune: P(goalie freezes a save -> faceoff)
@@ -222,20 +222,20 @@ export const RECOVERY = {
 /** Faceoffs. */
 export const FACEOFF = {
   PRIOR_RATE: 0.5,    // ASSUMPTION — tune: win rate when no rating; source pipeline/config.py FACEOFF_PRIOR_RATE
-  LOSS_CLEAR_P: 0.8,  // ASSUMPTION — tune: P(PK clears straight off an OZ faceoff win)
+  LOSS_CLEAR_P: 0.35, // ASSUMPTION — tune (pacing target: an opening faceoff loss rarely costs the whole regroup): P(PK clears straight off a PP faceoff loss)
 } as const;
 
 /** Zone entries. All ASSUMPTION — tune. */
 export const ENTRY = {
-  CARRY_P: 0.6,        // ASSUMPTION — tune: P(controlled carry-in succeeds)
-  DROP_P: 0.55,        // ASSUMPTION — tune: P(drop-pass entry succeeds)
+  CARRY_P: 0.75,       // ASSUMPTION — tune (pacing target: <= 2 zone entries/run): P(controlled carry-in succeeds)
+  DROP_P: 0.7,         // ASSUMPTION — tune (pacing target: <= 2 zone entries/run): P(drop-pass entry succeeds)
   DUMP_RECOVER_P: 0.35, // ASSUMPTION — tune: P(PP recovers its dump-in)
 } as const;
 
 /** Breakouts after the PK clears (only asked when settings.askEveryTouch). All ASSUMPTION — tune. */
 export const BREAKOUT = {
   CARRY_P: 0.8, // ASSUMPTION — tune: P(carry breakout gets through the neutral zone)
-  PASS_P: 0.82, // ASSUMPTION — tune: P(breakout pass connects)
+  PASS_P: 0.9,  // ASSUMPTION — tune (pacing target: short regroup loops): P(breakout pass connects)
   RIM_P: 0.78,  // ASSUMPTION — tune: P(rim breakout reaches a PP stick)
 } as const;
 

@@ -43,7 +43,7 @@ async function currentScreen(page: Page, calls: number): Promise<Screen> {
 }
 
 async function clickFirstEnabled(group: Locator, what: string, page: Page): Promise<void> {
-  const btn = group.locator("button:enabled:not([aria-label])").first();
+  const btn = group.locator(`button:enabled:not([aria-label="${t("a11y.estimateInfo")}"])`).first();
   try {
     await btn.waitFor({ state: "visible", timeout: SCREEN_TIMEOUT_MS });
   } catch {
@@ -91,7 +91,7 @@ async function doShot(page: Page): Promise<void> {
  * Returns true when the call was a shot (the picker then takes over the next iteration).
  */
 async function doDecision(page: Page, preferShoot: boolean): Promise<boolean> {
-  const panelRows = page.getByRole("tabpanel").locator("button:enabled:not([aria-label])");
+  const panelRows = page.getByRole("tabpanel").locator(`button:enabled:not([aria-label="${t("a11y.estimateInfo")}"])`);
   if (!preferShoot) {
     await page.getByRole("tab", { name: t("pause.tab.pass") }).click();
     const first = panelRows.first();

@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { clearRun, parseStoredRun, readQueue, readRun, STORAGE_KEYS, writeQueue, writeRun, type StoredRun } from "./persistence.ts";
+import {
+  clearRun, MAX_HISTORY_DATES, parseStoredRun, readDailyHistory, readQueue, readRun, recordDailyFinished, STORAGE_KEYS,
+  writeQueue, writeRun, type StoredRun,
+} from "./persistence.ts";
 import { dailyStatus, planRun, type PlanDeps } from "./plan.ts";
 import { createMemoryStore, createStore } from "./store.ts";
 import { fixtureSource, SCENARIO_A, SCENARIO_B } from "../testing/fixtures.ts";
@@ -203,4 +206,57 @@ test("plan edge: a corrupt queue is reset with a warning, not a crash", async ()
   store.set(STORAGE_KEYS.queue, "{{");
   const p = await planRun("endless", null, planDeps("2099-01-01", store));
   assert.ok(p.ok);
+});
+
+test("history: ending a Daily records its date once; unfinished and Endless runs record nothing", () => {
+  const store = createMemoryStore();
+  writeRun(store, run({ ended: false }));
+  writeRun(store, run({ mode: "endless", date: null, ended: true }));
+  assert.deepEqual(readDailyHistory(store), { ok: true, value: [] });
+  writeRun(store, run({ date: "2024-05-02", ended: true }));
+  writeRun(store, run({ date: "2024-05-02", ended: true }));
+  assert.deepEqual(readDailyHistory(store), { ok: true, value: ["2024-05-02"] });
+});
+
+test("history edge: dates come back sorted and deduplicated", () => {
+  const store = createMemoryStore();
+  for (const d of ["2024-05-03", "2024-05-01", "2024-05-02", "2024-05-01"]) recordDailyFinished(store, d);
+  assert.deepEqual(readDailyHistory(store), { ok: true, value: ["2024-05-01", "2024-05-02", "2024-05-03"] });
+});
+
+test("history edge: capped at the newest MAX_HISTORY_DATES", () => {
+  const store = createMemoryStore();
+  const base = Date.UTC(2020, 0, 1);
+  const total = MAX_HISTORY_DATES + 5;
+  for (let i = 0; i < total; i++) recordDailyFinished(store, new Date(base + i * 86_400_000).toISOString().slice(0, 10));
+  const h = readDailyHistory(store);
+  assert.ok(h.ok);
+  assert.equal(h.value.length, MAX_HISTORY_DATES);
+  assert.equal(h.value[h.value.length - 1], new Date(base + (total - 1) * 86_400_000).toISOString().slice(0, 10));
+});
+
+test("history edge: storage unavailable never throws and still works in-session", () => {
+  const store = createStore(() => {
+    throw new Error("SecurityError");
+  });
+  assert.equal(recordDailyFinished(store, "2024-05-02"), false);
+  assert.deepEqual(readDailyHistory(store), { ok: true, value: ["2024-05-02"] });
+});
+
+test("history edge: corrupt stored value is an Err on read and is replaced on the next record", () => {
+  const store = createMemoryStore();
+  store.set(STORAGE_KEYS.history, "{not json");
+  assert.equal(readDailyHistory(store).ok, false);
+  store.set(STORAGE_KEYS.history, JSON.stringify(["2024-05-02", 7]));
+  assert.equal(readDailyHistory(store).ok, false);
+  store.set(STORAGE_KEYS.history, JSON.stringify({ a: 1 }));
+  assert.equal(readDailyHistory(store).ok, false);
+  assert.equal(recordDailyFinished(store, "2024-05-03"), false);
+  assert.deepEqual(readDailyHistory(store), { ok: true, value: ["2024-05-03"] });
+});
+
+test("history edge: a malformed date is refused", () => {
+  const store = createMemoryStore();
+  assert.equal(recordDailyFinished(store, "2024-13-40"), false);
+  assert.deepEqual(readDailyHistory(store), { ok: true, value: [] });
 });
