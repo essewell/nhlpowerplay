@@ -1,0 +1,40 @@
+{
+  "synthetic": true,
+  "id": "zz-synthetic-demo-5on4",
+  "seed": 12345,
+  "game": { "nhl_game_id": 9999030001, "date": "2099-01-01", "game_type": 3, "home": "AAA", "away": "BBB", "stage": "P" },
+  "state": { "period": 2, "clock_elapsed_s": 600, "strength": "5v4", "score": { "pp": 1, "pk": 1 }, "pp_remaining_s": 120,
+    "penalties": [{ "side": "pk", "player_id": 9900106, "kind": "minor", "remaining_s": 120, "queued": false }],
+    "goalie_pulled": false },
+  "pp": {
+    "team_id": 901,
+    "abbrev": "BBB",
+    "skaters": [
+      { "id": 9900001, "team_id": 901, "first": "Testa", "last": "Alpha", "number": 11, "pos": "C" },
+      { "id": 9900002, "team_id": 901, "first": "Testa", "last": "Bravo", "number": 12, "pos": "L" },
+      { "id": 9900003, "team_id": 901, "first": "Testa", "last": "Charlie", "number": 13, "pos": "R" },
+      { "id": 9900004, "team_id": 901, "first": "Testa", "last": "Delta", "number": 14, "pos": "D" },
+      { "id": 9900005, "team_id": 901, "first": "Testa", "last": "Echo", "number": 15, "pos": "L" }
+    ],
+    "goalie": { "id": 9900006, "team_id": 901, "first": "Testa", "last": "Foxtrot", "number": 31, "pos": "G" },
+    "on_ice_source": "shifts",
+    "bench": [
+      { "id": 9900007, "team_id": 901, "first": "Testa", "last": "Golfo", "number": 16, "pos": "D" }
+    ]
+  },
+  "pk": {
+    "team_id": 902,
+    "abbrev": "AAA",
+    "skaters": [
+      { "id": 9900101, "team_id": 902, "first": "Fikta", "last": "Golf", "number": 21, "pos": "C" },
+      { "id": 9900102, "team_id": 902, "first": "Fikta", "last": "Hotel", "number": 22, "pos": "D" },
+      { "id": 9900103, "team_id": 902, "first": "Fikta", "last": "India", "number": 23, "pos": "D" },
+      { "id": 9900104, "team_id": 902, "first": "Fikta", "last": "Juliet", "number": 24, "pos": "R" }
+    ],
+    "goalie": { "id": 9900105, "team_id": 902, "first": "Fikta", "last": "Kilo", "number": 35, "pos": "G" },
+    "on_ice_source": "shifts"
+  },
+  "real_outcome": { "result": "no_goal", "scorer_id": null, "assist1_id": null, "assist2_id": null, "end_t": 720 },
+  "narrative": { "title": "Invented demo power play (synthetic, not a real game)", "sources": ["https://example.invalid/synthetic-dev-fixture"] },
+  "verification": { "status": "synthetic", "warnings": ["invented dev fixture"] }
+}

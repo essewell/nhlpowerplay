@@ -1,0 +1,5 @@
+[
+  { "scope": "all", "shot_type": "wrist", "dist_bucket": 0, "attempts": 100, "on_net": 80, "goals": 16, "p_unblocked": 0.16, "p_on_net": 0.2 },
+  { "scope": "all", "shot_type": "wrist", "dist_bucket": 1, "attempts": 100, "on_net": 70, "goals": 7, "p_unblocked": 0.07, "p_on_net": 0.1 },
+  { "scope": "all", "shot_type": "slap", "dist_bucket": 2, "attempts": 100, "on_net": 60, "goals": 3, "p_unblocked": 0.03, "p_on_net": 0.05 }
+]

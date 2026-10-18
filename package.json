@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "pnpm --filter @powerplay/web dev",
     "build": "pnpm --filter @powerplay/web build",
+    "data:sync": "node apps/web/scripts/data-sync.ts",
     "test:engine": "node --test \"packages/engine/src/*.test.ts\"",
     "test:web": "pnpm --filter @powerplay/web test",
     "test:pipeline": "cd data-pipeline && python -m unittest discover -s pipeline/tests -t .",

@@ -1,0 +1,4 @@
+[
+  { "player_id": 9900001, "scope": "all", "attempts": 50, "on_net": 35, "goals": 5, "xg": 5.0, "finishing_mult": 1.0, "accuracy": 0.7, "rating": 70, "low_sample": 0 },
+  { "player_id": 9900004, "scope": "all", "attempts": 10, "on_net": 6, "goals": 0, "xg": 0.5, "finishing_mult": 0.95, "accuracy": 0.6, "rating": 60, "low_sample": 1 }
+]

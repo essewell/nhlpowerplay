@@ -1,0 +1,4 @@
+[
+  { "player_id": 9900001, "scope": "all", "won": 50, "taken": 100, "win_rate": 0.5 },
+  { "player_id": 9900101, "scope": "all", "won": 40, "taken": 100, "win_rate": 0.4 }
+]
