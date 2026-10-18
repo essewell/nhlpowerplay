@@ -1,7 +1,10 @@
 # PowerPlay scenario + ratings database
 
-Builds the real-data database behind PowerPlay: every NHL power play from
-**2015-16 through 2025-26** (regular season and playoffs), player and goalie
+Builds the real-data database behind PowerPlay: every NHL power play in the
+**playoffs from 2009-10 through 2025-26** (regular season, if built, from
+2015-16; see `PLAYOFF_FIRST_SEASON_START_YEAR` / `FIRST_SEASON_START_YEAR` in
+`pipeline/config.py`). 2009-10 shift charts are empty, so those games feed
+ratings and base rates but never the Daily/Endless pool. Player and goalie
 probability ratings, shooter-vs-goalie matchups, curated famous moments, the
 Daily schedule and the Endless pool. Plus the TypeScript likelihood engine that
 turns those numbers into option subtext ("Pass to Kucherov · 78% connects").
@@ -11,7 +14,8 @@ turns those numbers into option subtext ("Pass to Kucherov · 78% connects").
 | Piece | Source | Status |
 | --- | --- | --- |
 | Games, PP segments, score/clock/strength, penalties, on-ice skaters | NHL play-by-play + shift charts (api-web.nhle.com, api.nhle.com/stats/rest) | Real, pulled by `ingest` |
-| P(goal) by shot type x distance on the PP | Same PBP, all PP shots 2015-26 | Real, computed by `ratings` |
+| P(goal) by shot type x distance on the PP | Same PBP, all PP shots in scope | Real, computed by `ratings` |
+| Penalty box at each PP start (who is off, time left, queued penalties) | Replayed from PBP penalty + goal events (`penalty_box.py`); code table and NHL rule references in `config.py` | Derived; unknown penalty codes are an explicit error |
 | Shooter finishing, accuracy; goalie goals-vs-expected; faceoff %; playmaking (primary assists) | Same | Real, shrunk toward league average |
 | Shooter x goalie matchups | Same | Real |
 | 6 curated famous moments | Facts from cited articles in `data/curated_moments.json` | Verified against sources; `curate` re-verifies against PBP |
@@ -25,7 +29,7 @@ computed from the play-by-play when you run the pipeline.
 
 ```bash
 cd powerplay-data
-python -m unittest discover -s pipeline/tests -t .        # 20 tests, offline
+python -m unittest discover -s pipeline/tests -t .        # 225 tests, offline
 node --test "../packages/engine/src/*.test.ts"               # 17 engine tests, Node 22.18+
 
 python -m pipeline.build probe --game-id 2023020204 --date 2023-11-10   # MUST pass first
@@ -47,8 +51,11 @@ before trusting anything else.
 **Cost estimate (arithmetic, not measured):** ~1,300 regular-season + ~85
 playoff games per season x 11 seasons, 2 requests each (PBP + shifts), at the
 0.5 s polite interval = roughly 4-5 hours for the full build; playoffs only is
-roughly 15-20 minutes. Every response is cached in `data/raw/`, so reruns and
-`--offline` builds cost nothing.
+roughly 15-20 minutes (the 2009-10..2014-15 playoff extension adds roughly
+500 games, about 10 minutes; estimate). Every response is cached in `data/raw/`,
+so reruns and `--offline` builds cost nothing. `schedule` reads the cache only
+(never the network): it rebuilds every mined scenario from the cached PBP and
+shift charts, and logs any it has to exclude to `data/schedule_failures.log`.
 
 ## Outputs (`data/export/`)
 
@@ -56,7 +63,7 @@ roughly 15-20 minutes. Every response is cached in `data/raw/`, so reruns and
 | --- | --- |
 | `base_rates.json` | P(goal) per PP shot type x distance bucket, with counts |
 | `shooter_ratings.json`, `goalie_ratings.json`, `faceoff_ratings.json`, `playmaker_ratings.json` | Per player, per season and `all`; multipliers + 40-99 display rating + low-sample flag |
-| `scenarios/<id>.json` | One file per scenario: real teams, on-ice units, score, clock, PP time left, hidden real outcome |
+| `scenarios/<id>.json` | One file per scenario, same shape for curated and mined: real teams, on-ice units (validated against the strength), PP bench, score, clock, PP time left, penalty box, goalie pulled, hidden real outcome. Files not in the current index are removed on export |
 | `schedule.json` | Daily mode: one scenario per date, identical for everyone (curated first, then mined) |
 | `endless_index.json` | Endless mode pool |
 
@@ -69,7 +76,8 @@ split-half reliability). A shooter with 0 shots is exactly league average (1.0).
 
 ## Complexity
 
-Parsing and segmenting: O(E) per game. Ratings: O(S) over S shots plus
+Parsing: O(E) per game. Segmenting with the penalty-box replay: O(E + S(E + P^2))
+per game for S segments and P man-down penalties. Ratings: O(S) over S shots plus
 O(P log P) to rank P players. Mining: O(N log N). Likelihood calls: O(D) for
 D <= 5 defenders. Endless queue: O(n) shuffle, O(1) per draw.
 

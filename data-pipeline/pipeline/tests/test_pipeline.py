@@ -186,7 +186,8 @@ class FakeClient:
 
     def shifts(self, game_id):
         return {"data": [{"playerId": p, "teamId": t, "period": 1, "startTime": "04:50", "endTime": "06:30"}
-                         for p, t in [(101, HOME), (102, HOME), (103, HOME), (199, HOME), (201, AWAY), (299, AWAY)]]}
+                         for p, t in [(101, HOME), (102, HOME), (103, HOME), (104, HOME), (105, HOME), (199, HOME),
+                                      (201, AWAY), (202, AWAY), (203, AWAY), (204, AWAY), (299, AWAY)]]}
 
 
 class TestCuration(unittest.TestCase):
@@ -197,7 +198,7 @@ class TestCuration(unittest.TestCase):
     def test_verified_scenario(self):
         scen = scenarios.resolve_curated(dict(self.base), FakeClient(synthetic_game(), "2024-04-20"))
         self.assertEqual(scen["verification"]["status"], "verified_against_pbp")
-        self.assertEqual({p["id"] for p in scen["pp"]["skaters"]}, {101, 102, 103})
+        self.assertEqual({p["id"] for p in scen["pp"]["skaters"]}, {101, 102, 103, 104, 105})
         self.assertEqual(scen["pp"]["goalie"]["id"], 199)
         self.assertEqual(scen["state"]["pp_remaining_s"], 115)
         self.assertEqual(scen["seed"], scenarios.stable_seed("test-moment"))
@@ -307,12 +308,15 @@ class TestIntegration(unittest.TestCase):
                 with gzip.open(path, "wt", encoding="utf-8") as fh:
                     json.dump({"url": url, "body": body}, fh)
             conn = build.connect(d / "t.db")
-            self.assertEqual(build.cmd_ingest(client, conn, ["20232024"], [3]), 0)
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM pp_segments").fetchone()[0], 5)
-            self.assertEqual(build.cmd_ratings(conn), 0)
-            self.assertGreater(conn.execute("SELECT COUNT(*) FROM base_rates").fetchone()[0], 0)
-            self.assertEqual(build.cmd_schedule(conn, date(2026, 11, 1)), 0)
-            self.assertEqual(build.cmd_export(conn, d / "export"), 0)
+            (d / "data").mkdir()
+            from unittest.mock import patch
+            with patch.object(config, "ROOT", d):  # failure logs go to the temp dir, never the real data/
+                self.assertEqual(build.cmd_ingest(client, conn, ["20232024"], [3]), 0)
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM pp_segments").fetchone()[0], 5)
+                self.assertEqual(build.cmd_ratings(conn), 0)
+                self.assertGreater(conn.execute("SELECT COUNT(*) FROM base_rates").fetchone()[0], 0)
+                self.assertEqual(build.cmd_schedule(conn, date(2026, 11, 1), client), 0)
+                self.assertEqual(build.cmd_export(conn, d / "export"), 0)
             exported = json.loads((d / "export" / "schedule.json").read_text())
             self.assertTrue(exported and exported[0]["date"] == "2026-11-01")
             conn.close()
@@ -369,16 +373,17 @@ class TestSideInference(unittest.TestCase):
         ]
         self.assertNotIn(5, parse._infer_defending_sides(plays, LEGACY_HEADER))
 
-    def test_blocked_shot_team_swap_is_respected(self):
-        # eventOwnerTeamId on a blocked shot is the blocking team; the shooting
-        # team's zone/x still drives the vote the same way a shot does.
+    def test_blocked_shots_do_not_vote(self):
+        # A blocked shot's zoneCode is relative to the blocking team, so it is
+        # left out of the vote entirely (even a contradicting one changes nothing).
         plays = [
-            play(1, "blocked-shot", 6, "01:00", "1551", side=None, eventOwnerTeamId=AWAY, zoneCode="O", xCoord=70),
+            play(1, "blocked-shot", 6, "01:00", "1551", side=None, eventOwnerTeamId=HOME, zoneCode="O", xCoord=70),
             play(2, "shot-on-goal", 6, "02:00", "1551", side=None, eventOwnerTeamId=HOME, zoneCode="O", xCoord=68),
             play(3, "shot-on-goal", 6, "03:00", "1551", side=None, eventOwnerTeamId=HOME, zoneCode="O", xCoord=72),
         ]
-        # blocked-shot owner (AWAY) is swapped to HOME (the shooting team) by
-        # _owner_team_id, so all three votes agree: home attacks +x -> "left".
+        self.assertEqual(parse._infer_defending_sides(plays, LEGACY_HEADER), {})  # only 2 votes: unresolved
+        plays.append(play(4, "missed-shot", 6, "04:00", "1551", side=None, eventOwnerTeamId=HOME,
+                          zoneCode="O", xCoord=60))
         self.assertEqual(parse._infer_defending_sides(plays, LEGACY_HEADER), {6: "left"})
 
     def test_explicit_side_overrides_inference_end_to_end(self):
@@ -524,9 +529,9 @@ class TestSegmentDedup(unittest.TestCase):
         # flickers even -> PP -> even -> PP again, all logged at t=18:25,
         # and the second PP carries into period 2 (as in the real bug).
         segs = build_segments(self._header(), self._events([
-            play(1, "penalty", 1, "18:25", "1551", eventOwnerTeamId=AWAY, committedByPlayerId=1),
-            play(2, "penalty", 1, "18:25", "1451", eventOwnerTeamId=HOME, committedByPlayerId=2),
-            play(3, "penalty", 1, "18:25", "1441", eventOwnerTeamId=AWAY, committedByPlayerId=3),
+            play(1, "penalty", 1, "18:25", "1551", eventOwnerTeamId=AWAY, committedByPlayerId=1, typeCode="MIN", duration=2),
+            play(2, "penalty", 1, "18:25", "1451", eventOwnerTeamId=HOME, committedByPlayerId=2, typeCode="MIN", duration=2),
+            play(3, "penalty", 1, "18:25", "1441", eventOwnerTeamId=AWAY, committedByPlayerId=3, typeCode="MIN", duration=2),
             play(4, "faceoff", 1, "18:25", "1451", eventOwnerTeamId=HOME, winningPlayerId=4, losingPlayerId=5),
             play(5, "faceoff", 2, "00:00", "1451", eventOwnerTeamId=HOME, winningPlayerId=6, losingPlayerId=7),
         ]))
@@ -540,11 +545,11 @@ class TestSegmentDedup(unittest.TestCase):
         # revisiting a given key must be part of one contiguous same-instant
         # run; this checks the dedup holds for more than a single flicker.
         segs = build_segments(self._header(), self._events([
-            play(1, "penalty", 1, "18:25", "1551", eventOwnerTeamId=AWAY, committedByPlayerId=1),
-            play(2, "penalty", 1, "18:25", "1451", eventOwnerTeamId=HOME, committedByPlayerId=2),
-            play(3, "penalty", 1, "18:25", "1551", eventOwnerTeamId=AWAY, committedByPlayerId=3),
-            play(4, "penalty", 1, "18:25", "1451", eventOwnerTeamId=HOME, committedByPlayerId=4),
-            play(5, "penalty", 1, "18:25", "1551", eventOwnerTeamId=AWAY, committedByPlayerId=5),
+            play(1, "penalty", 1, "18:25", "1551", eventOwnerTeamId=AWAY, committedByPlayerId=1, typeCode="MIN", duration=2),
+            play(2, "penalty", 1, "18:25", "1451", eventOwnerTeamId=HOME, committedByPlayerId=2, typeCode="MIN", duration=2),
+            play(3, "penalty", 1, "18:25", "1551", eventOwnerTeamId=AWAY, committedByPlayerId=3, typeCode="MIN", duration=2),
+            play(4, "penalty", 1, "18:25", "1451", eventOwnerTeamId=HOME, committedByPlayerId=4, typeCode="MIN", duration=2),
+            play(5, "penalty", 1, "18:25", "1551", eventOwnerTeamId=AWAY, committedByPlayerId=5, typeCode="MIN", duration=2),
             play(6, "faceoff", 1, "18:25", "1451", eventOwnerTeamId=HOME, winningPlayerId=6, losingPlayerId=7),
             play(7, "faceoff", 2, "00:00", "1451", eventOwnerTeamId=HOME, winningPlayerId=8, losingPlayerId=9),
         ]))
@@ -556,7 +561,7 @@ class TestSegmentDedup(unittest.TestCase):
         # PP opens right as the recorded play-by-play simply ends: no other
         # segment claims this (period, start_t) slot, so it is real state, kept as-is.
         segs = build_segments(self._header(), self._events([
-            play(1, "penalty", 1, "19:58", "1551", eventOwnerTeamId=AWAY, committedByPlayerId=1),
+            play(1, "penalty", 1, "19:58", "1551", eventOwnerTeamId=AWAY, committedByPlayerId=1, typeCode="MIN", duration=2),
             play(2, "faceoff", 1, "19:58", "1451", eventOwnerTeamId=HOME, winningPlayerId=4, losingPlayerId=5),
         ]))
         self.assertEqual(len(segs), 1)
@@ -588,7 +593,7 @@ class TestSegmentDedup(unittest.TestCase):
         # A goal scored off the opening faceoff of a PP: the segment opens and
         # closes in the same instant, but a real goal happened, so it is kept.
         segs = build_segments(self._header(), self._events([
-            play(1, "penalty", 1, "10:00", "1551", eventOwnerTeamId=AWAY, committedByPlayerId=1),
+            play(1, "penalty", 1, "10:00", "1551", eventOwnerTeamId=AWAY, committedByPlayerId=1, typeCode="MIN", duration=2),
             play(2, "faceoff", 1, "10:00", "1451", eventOwnerTeamId=HOME, winningPlayerId=2, losingPlayerId=3),
             play(3, "goal", 1, "10:00", "1451", eventOwnerTeamId=HOME, scoringPlayerId=2,
                  goalieInNetId=3, shotType="wrist", xCoord=80, yCoord=0, homeScore=1, awayScore=0),
@@ -787,11 +792,14 @@ class TestIngestResilience(unittest.TestCase):
                 conn.close()
 
     def test_both_games_succeed_when_ids_do_not_collide(self):
+        from unittest.mock import patch
         from pipeline import build
         with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "data").mkdir()
             conn = build.connect(Path(d) / "t.db")
             client = _TwoGameClient()
-            rc = build.cmd_ingest(client, conn, ["20232024"], [2])
+            with patch.object(config, "ROOT", Path(d)):  # a failure must never write to the real data/
+                rc = build.cmd_ingest(client, conn, ["20232024"], [2])
             self.assertEqual(rc, 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM games").fetchone()[0], 2)
             conn.close()

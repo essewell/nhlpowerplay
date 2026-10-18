@@ -12,16 +12,48 @@ Pure functions; thread-safe.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from . import config
 from .parse import Event, GameHeader
+from .penalty_box import PenaltyReplay
 
 OUTCOME_GOAL = "goal"
 OUTCOME_SH_GOAL = "sh_goal_against"
 OUTCOME_NO_GOAL = "no_goal"
 OUTCOME_CARRIED = "carried_over"
+STRENGTH_FROM_FACEOFF = "faceoff"
+STRENGTH_FROM_OPENER = "opener"
+
+logger = logging.getLogger(__name__)
+
+
+def restart_event(events: list[Event], open_idx: int, pp_is_home: bool) -> Event | None:
+    """The restart faceoff for a PP opened at events[open_idx], or None.
+
+    Walks forward from the opener (inclusive) through dead-puck events only
+    (config.DEAD_PUCK_EVENTS: penalty, stoppage, delayed-penalty,
+    period-start) and returns the first faceoff, if it still shows this side
+    on a power play. Clock stamps are not compared: the PBP can log a
+    stoppage after its own restart time (e.g. stoppage 16:21, faceoff 16:19).
+    Returns None when the opener or anything before the faceoff is a live-play
+    event (the PP began in play, e.g. a penalty expiring), when the period
+    ends first, or when the faceoff no longer shows the PP; the caller then
+    falls back to the opening event, explicitly. O(k) for the k events walked.
+    """
+    opener = events[open_idx]
+    for ev in events[open_idx:]:
+        if ev.period != opener.period:
+            return None
+        if ev.t < opener.t:
+            continue  # logged late but stamped before the opener: not play after the restart
+        if ev.kind != config.EV_FACEOFF and ev.kind not in config.DEAD_PUCK_EVENTS:
+            return None
+        if ev.kind == config.EV_FACEOFF and ev.situation is not None:
+            return ev if ev.situation.is_power_play(pp_is_home) else None
+    return None
 
 
 @dataclass
@@ -49,6 +81,10 @@ class PpSegment:
     goalie_id: int | None = None
     shots: list[dict[str, Any]] = field(default_factory=list)
     faceoffs: list[dict[str, Any]] = field(default_factory=list)
+    goalie_pulled: bool = False          # PP side's goalie off at the restart faceoff (situationCode)
+    restart_t: int | None = None         # time of the restart faceoff; on-ice units are looked up here
+    strength_source: str = ""            # STRENGTH_FROM_FACEOFF, or STRENGTH_FROM_OPENER (logged fallback)
+    penalties: list[dict[str, Any]] = field(default_factory=list)  # penalty_box snapshot at the opener
     seq: int = 0  # disambiguates segments that share (game_id, period, start_t); see segment_id()
 
     def to_dict(self) -> dict[str, Any]:
@@ -60,6 +96,14 @@ def _abs_t(period: int, t: int) -> int:
 
 
 def build_segments(header: GameHeader, events: list[Event]) -> list[PpSegment]:
+    """Cut every PP in one game. Raises penalty_box.PenaltyError on an unknown penalty code.
+
+    pp_remaining_s is the time until the advantage ends per the penalty-box
+    replay (None when the replay shows no advantage for the PP team, e.g. a
+    penalty missing from the PBP); such segments never enter the pool.
+    O(E + S * (E + P^2)) for E events, S segments, P man-down penalties.
+    """
+    replay = PenaltyReplay(events, header)
     segments: list[PpSegment] = []
     current: PpSegment | None = None
     home_score = away_score = 0
@@ -104,7 +148,7 @@ def build_segments(header: GameHeader, events: list[Event]) -> list[PpSegment]:
         append(current)
         current = None
 
-    for ev in events:
+    for idx, ev in enumerate(events):
         if ev.kind == config.EV_PENALTY and ev.team_id is not None:
             last_penalty_by_team[ev.team_id] = ev
 
@@ -144,20 +188,36 @@ def build_segments(header: GameHeader, events: list[Event]) -> list[PpSegment]:
             pp_team = header.home_id if pp_is_home else header.away_id
             pk_team = header.away_id if pp_is_home else header.home_id
             pen = last_penalty_by_team.get(pk_team)
-            remaining = None
-            if pen is not None and pen.penalty_minutes:
-                end_abs = _abs_t(pen.period, pen.t) + pen.penalty_minutes * config.SECONDS_PER_PENALTY_MINUTE
-                remaining = max(0, end_abs - _abs_t(ev.period, ev.t))
+            # Strength, goalie_pulled, the on-ice time and the box snapshot all
+            # come from the restart faceoff, not from the penalty / stoppage
+            # event whose situationCode can be a delayed-call transient.
+            restart = restart_event(events, idx, pp_is_home)
+            if restart is None:
+                # Common and legitimate when a PP begins in live play; the
+                # segment records strength_source so callers can count these.
+                logger.info("game %s P%s %ss: no restart faceoff after the opener; strength taken from "
+                            "the opening %s event", header.game_id, ev.period, ev.t, ev.kind)
+                restart, source = ev, STRENGTH_FROM_OPENER
+            else:
+                source = STRENGTH_FROM_FACEOFF
+            assert restart.situation is not None
+            box = replay.at(restart.period, restart.t, pp_team)
+            remaining = (None if box.advantage_end_abs is None
+                         else box.advantage_end_abs - _abs_t(restart.period, restart.t))
             current = PpSegment(
                 game_id=header.game_id, game_type=header.game_type, date=header.date,
                 pp_team_id=pp_team, pk_team_id=pk_team, pp_is_home=pp_is_home,
                 period=ev.period, start_t=ev.t, end_t=ev.t,
-                strength=ev.situation.label(pp_is_home),
+                strength=restart.situation.label(pp_is_home),
                 pp_score=home_score if pp_is_home else away_score,
                 pk_score=away_score if pp_is_home else home_score,
                 pp_remaining_s=remaining,
                 penalty_event_id=pen.event_id if pen else None,
                 penalised_player_id=pen.player1 if pen else None,
+                goalie_pulled=restart.situation.skaters(pp_is_home)[1] == 0,
+                penalties=box.penalties,
+                restart_t=restart.t,
+                strength_source=source,
             )
             _collect(current, ev)
 

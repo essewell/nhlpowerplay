@@ -15,6 +15,7 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest.mock import patch
 
 from pipeline import build, config, ratings, scenarios
 from pipeline.nhl_client import FetchError, NhlClient, SchemaError
@@ -350,7 +351,7 @@ class TestShiftlessGameEndToEnd(unittest.TestCase):
                          {"data": [], "total": 0})
             conn = build.connect(d / "t.db")
             try:
-                with contextlib.redirect_stdout(io.StringIO()):
+                with contextlib.redirect_stdout(io.StringIO()), patch.object(config, "ROOT", d):
                     self.assertEqual(build.cmd_ingest(client, conn, ["20092010", "20232024"], [3]), 0)
                     flags = dict(conn.execute("SELECT game_id, has_shifts FROM games"))
                     self.assertEqual(flags, {shifted["id"]: 1, shiftless["id"]: 0})
@@ -359,8 +360,8 @@ class TestShiftlessGameEndToEnd(unittest.TestCase):
                     self.assertEqual(build.cmd_ratings(conn), 0)
                     seasons = {s for (s,) in conn.execute("SELECT DISTINCT scope FROM base_rates")}
                     self.assertIn("20092010", seasons)
-                    self.assertEqual(build.cmd_schedule(conn, date(2026, 11, 1)), 0)
-                mined_games = {json.loads(p)["game_id"] for (p,) in
+                    self.assertEqual(build.cmd_schedule(conn, date(2026, 11, 1), client), 0)
+                mined_games = {json.loads(p)["game"]["nhl_game_id"] for (p,) in
                                conn.execute("SELECT payload_json FROM scenarios WHERE kind='mined'")}
                 self.assertTrue(mined_games)
                 self.assertNotIn(shiftless["id"], mined_games)
@@ -377,8 +378,8 @@ class TestShiftlessGameEndToEnd(unittest.TestCase):
                     conn.execute("INSERT INTO scenarios VALUES (?,?,?,?)",
                                  ("2016030153-p4-0044", "mined", 1.0, "{}"))      # old zero-length pick
                     conn.execute("INSERT INTO scenarios VALUES (?,?,?,?)", ("curated-x", "curated", 0.0, "{}"))
-                with contextlib.redirect_stdout(io.StringIO()):
-                    self.assertEqual(build.cmd_schedule(conn, date(2026, 11, 1)), 0)
+                with contextlib.redirect_stdout(io.StringIO()), patch.object(config, "ROOT", Path(d)):
+                    self.assertEqual(build.cmd_schedule(conn, date(2026, 11, 1), NhlClient(cache_dir=Path(d), offline=True)), 0)
                 left = {sid for (sid,) in conn.execute("SELECT scenario_id FROM scenarios")}
                 self.assertEqual(left, {"curated-x"})
             finally:
@@ -526,7 +527,7 @@ class TestEraCoverage(unittest.TestCase):
         self.assertEqual(cov["plays"], len(pbp["plays"]))
         self.assertEqual(cov["with_situation_code"], len(pbp["plays"]))
         self.assertEqual(cov["with_home_defending_side"], len(pbp["plays"]))
-        self.assertEqual(cov["shift_rows"], 6)
+        self.assertEqual(cov["shift_rows"], 11)
         self.assertGreater(cov["with_coordinates"], 0)
 
     def test_2009_style_no_side_no_shifts(self):

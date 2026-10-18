@@ -70,6 +70,10 @@ class NhlClient:
     cache_dir: Path = config.CACHE_DIR
     min_interval_s: float = config.REQUEST_MIN_INTERVAL_S
     offline: bool = False
+    # Read the disk cache only; a miss raises FetchError instead of fetching.
+    # Same effect as offline, but set by code paths (cmd_schedule) that must
+    # never touch the network whatever the CLI flags say.
+    cache_only: bool = False
     sleep: Callable[[float], None] = time.sleep
     opener: Callable[..., Any] = urllib.request.urlopen
     _last_request_at: float = field(default=0.0, init=False)
@@ -87,8 +91,9 @@ class NhlClient:
                     return json.load(fh)["body"]
             except (json.JSONDecodeError, KeyError, OSError, EOFError) as exc:
                 raise FetchError(f"corrupt cache file {path} for {url}: {exc}") from exc
-        if self.offline:
-            raise FetchError(f"offline mode and no cache for {url}")
+        if self.offline or self.cache_only:
+            mode = "offline" if self.offline else "cache-only"
+            raise FetchError(f"{mode} mode and no cache for {url}")
         body = self._fetch_with_retries(url)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.name + ".tmp")

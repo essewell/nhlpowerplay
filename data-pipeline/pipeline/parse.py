@@ -119,6 +119,11 @@ def _infer_defending_sides(plays: list[dict[str, Any]], header: GameHeader) -> d
         zone, x = d.get("zoneCode"), d.get("xCoord")
         if period is None or zone not in ("O", "D") or x is None or x == 0:
             continue
+        if play.get("typeDescKey") == config.EV_BLOCK:
+            # A blocked shot's zoneCode/owner pair is relative to the blocking
+            # team while xCoord is the shot's spot; the swap makes the vote
+            # easy to get backwards, so blocked shots never vote.
+            continue
         team_id = _owner_team_id(play, header)
         if team_id is None:
             continue
@@ -294,6 +299,7 @@ def _parse_play(play: dict[str, Any], header: GameHeader, side_by_period: dict[i
         dur = d.get("duration")
         ev.penalty_minutes = int(dur) if dur is not None else None
         ev.extra["desc"] = d.get("descKey")
+        ev.extra["served_by"] = d.get("servedByPlayerId")  # bench minors / goalie penalties
     return ev
 
 

@@ -25,6 +25,10 @@ class CurationMismatch(RuntimeError):
     """Curated facts do not match the play-by-play. Fix the curated entry or investigate."""
 
 
+class ScenarioInvalid(ValueError):
+    """A built scenario contradicts itself (e.g. on-ice counts vs strength); it must not be exported."""
+
+
 # ---------------------------------------------------------------------------
 # Shifts -> on-ice lookup
 # ---------------------------------------------------------------------------
@@ -63,11 +67,26 @@ def stable_seed(scenario_id: str) -> int:
     return int.from_bytes(hashlib.sha256(scenario_id.encode("utf-8")).digest()[:4], "big")
 
 
+def _sweater_key(p: dict[str, Any]) -> tuple[bool, int, int]:
+    number = p.get("number")
+    return (number is None, int(number) if number is not None else 0, int(p["id"]))
+
+
 def scenario_from_segment(seg: PpSegment, header: GameHeader, roster: dict[int, dict[str, Any]],
                           shifts: list[Shift] | None, scenario_id: str,
                           narrative: dict[str, Any] | None = None, stage: str | None = None) -> dict[str, Any]:
+    """One scenario in the shared curated/mined shape. O(S + R) for S shifts, R roster spots.
+
+    pp.bench lists the PP team's roster skaters (no goalies) who are neither on
+    the ice nor serving a penalty, sorted by sweater number (unknown numbers last).
+    Does not validate; call validate_scenario() before exporting.
+    """
+    on_ice_ids: dict[int, set[int]] = {}
+
     def unit(team_id: int) -> dict[str, Any]:
-        ids = on_ice(shifts, team_id, seg.period, seg.start_t) if shifts else set()
+        at = seg.restart_t if seg.restart_t is not None else seg.start_t  # restart faceoff, see segments.py
+        ids = on_ice(shifts, team_id, seg.period, at) if shifts else set()
+        on_ice_ids[team_id] = ids
         players = [{"id": pid, **roster.get(pid, {})} for pid in sorted(ids)]
         return {
             "team_id": team_id,
@@ -76,6 +95,13 @@ def scenario_from_segment(seg: PpSegment, header: GameHeader, roster: dict[int, 
             "goalie": next((p for p in players if p.get("pos") == "G"), None),
             "on_ice_source": "shifts" if shifts else "unknown",
         }
+    pp = unit(seg.pp_team_id)
+    boxed = {p["player_id"] for p in seg.penalties if p.get("side") == "pp" and p.get("player_id") is not None}
+    pp["bench"] = sorted(
+        ({"id": pid, **r} for pid, r in roster.items()
+         if r.get("team_id") == seg.pp_team_id and r.get("pos") != "G"
+         and pid not in on_ice_ids[seg.pp_team_id] and pid not in boxed),
+        key=_sweater_key)
     return {
         "id": scenario_id,
         "seed": stable_seed(scenario_id),
@@ -83,13 +109,36 @@ def scenario_from_segment(seg: PpSegment, header: GameHeader, roster: dict[int, 
                  "home": header.home_abbrev, "away": header.away_abbrev, "stage": stage},
         "state": {"period": seg.period, "clock_elapsed_s": seg.start_t, "strength": seg.strength,
                   "score": {"pp": seg.pp_score, "pk": seg.pk_score},
-                  "pp_remaining_s": seg.pp_remaining_s},
-        "pp": unit(seg.pp_team_id),
+                  "pp_remaining_s": seg.pp_remaining_s,
+                  "penalties": [dict(p) for p in seg.penalties],
+                  "goalie_pulled": seg.goalie_pulled},
+        "pp": pp,
         "pk": unit(seg.pk_team_id),
         "real_outcome": {"result": seg.outcome, "scorer_id": seg.scorer_id, "assist1_id": seg.assist1_id,
                          "assist2_id": seg.assist2_id, "end_t": seg.end_t},
         "narrative": narrative or {},
     }
+
+
+def validate_scenario(scen: dict[str, Any]) -> None:
+    """Raise ScenarioInvalid unless on-ice skater counts match the strength. O(1).
+
+    strength is "<pp>v<pk>" skaters from the opening situationCode; the PP
+    count already includes an extra attacker when the goalie is pulled, so
+    the PP unit must hold exactly <pp> skaters and the PK unit <pk>.
+    """
+    sid = scen.get("id")
+    strength = scen.get("state", {}).get("strength")
+    try:
+        want_pp, want_pk = (int(x) for x in str(strength).split("v"))
+    except ValueError as exc:
+        raise ScenarioInvalid(f"{sid}: unreadable strength {strength!r}") from exc
+    if scen["pp"].get("on_ice_source") != "shifts":
+        raise ScenarioInvalid(f"{sid}: no shift data, on-ice units unknown (lineups are never invented)")
+    got_pp, got_pk = len(scen["pp"]["skaters"]), len(scen["pk"]["skaters"])
+    if (got_pp, got_pk) != (want_pp, want_pk):
+        raise ScenarioInvalid(f"{sid}: on-ice skaters {got_pp}v{got_pk} from shifts do not match strength "
+                              f"{strength}" + (" (PP goalie pulled)" if scen["state"].get("goalie_pulled") else ""))
 
 
 def resolve_curated(moment: dict[str, Any], client: NhlClient) -> dict[str, Any]:
@@ -138,6 +187,10 @@ def resolve_curated(moment: dict[str, Any], client: NhlClient) -> dict[str, Any]
     scen = scenario_from_segment(candidates[0], header, roster, shifts, need(moment, "id"),
                                  narrative={"title": moment.get("title"), "sources": moment.get("sources", [])},
                                  stage=moment.get("stage"))
+    try:
+        validate_scenario(scen)
+    except ScenarioInvalid as exc:
+        raise CurationMismatch(f"{moment['id']}: scenario fails validation, not exported: {exc}") from exc
     scen["verification"] = {"status": "verified_against_pbp", "warnings": moment.get("_warnings", [])}
     return scen
 

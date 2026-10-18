@@ -82,6 +82,44 @@ MINOR_S = 120
 SECONDS_PER_PENALTY_MINUTE = 60
 
 # ---------------------------------------------------------------------------
+# Penalty-box replay (penalty_box.py)
+# ---------------------------------------------------------------------------
+PEN_MINOR = "minor"
+PEN_DOUBLE_MINOR = "double_minor"
+PEN_MAJOR = "major"
+DOUBLE_MINOR_S = 2 * MINOR_S            # NHL Rule 18 (double minor = two consecutive minors)
+MAJOR_S = 300                           # NHL Rule 20 (major = 5 minutes)
+PENALTY_DURATION_S = {PEN_MINOR: MINOR_S, PEN_DOUBLE_MINOR: DOUBLE_MINOR_S, PEN_MAJOR: MAJOR_S}
+# Minutes in details.duration -> kind (Emmett's spec: 2 minor, 4 double minor, 5 major).
+PENALTY_KIND_BY_MINUTES = {2: PEN_MINOR, 4: PEN_DOUBLE_MINOR, 5: PEN_MAJOR}
+# NHL Rule 26 (delayed penalties): a team is never below three skaters, so at
+# most two penalties per side run at once; further ones wait in a queue.
+MAX_ACTIVE_PENALTIES_PER_SIDE = 2
+# (details.typeCode, details.duration minutes) -> kind, or None for a penalty
+# that puts no man down. Every pair below was seen in the cached play-by-play
+# (999 games: 2015-16..2025-26 playoffs + probe games, surveyed 2026-10-18;
+# counts in parentheses). Any other pair is an explicit PenaltyError, never a guess.
+PENALTY_KIND_BY_CODE: dict[tuple[str, int], str | None] = {
+    ("MIN", 2): PEN_MINOR,              # minor (7616)
+    ("MIN", 4): PEN_DOUBLE_MINOR,       # *-double-minor descKeys (99)
+    ("BEN", 2): PEN_MINOR,              # bench minor, served by servedByPlayerId (242)
+    ("MAJ", 5): PEN_MAJOR,              # major (213)
+    # Match penalty: player ejected, a teammate serves 5 minutes (NHL Rule 21).
+    # ASSUMPTION: the duration-10 variant ('match-penatly-10-minutes', 5 seen)
+    # is the same 5-minute man-down major; verify against situationCode.
+    ("MAT", 5): PEN_MAJOR,              # (1)
+    ("MAT", 10): PEN_MAJOR,             # (5)
+    ("MIS", 10): None,                  # misconduct: player off, team not shorthanded (NHL Rule 22) (401)
+    ("GAM", 10): None,                  # game misconduct (NHL Rule 23) (45)
+    ("PS", 0): None,                    # penalty shot awarded instead of a minor (NHL Rule 24) (21)
+}
+# NHL Rule 19 (coincidental penalties): equal penalties to both teams at the
+# same stoppage cancel and nobody is shorthanded. Applied per kind (minor vs
+# minor, double vs double, major vs major). ASSUMPTION: which of several
+# same-kind penalties cancel is taken in event order (the rule leaves it to the
+# captains), and unequal mixes beyond pairwise same-kind cancelling are not netted.
+
+# ---------------------------------------------------------------------------
 # Event vocabulary (typeDescKey values used by hockeyR against this API)
 # ---------------------------------------------------------------------------
 EV_GOAL = "goal"
@@ -91,6 +129,13 @@ EV_BLOCK = "blocked-shot"
 EV_FACEOFF = "faceoff"
 EV_PENALTY = "penalty"
 EV_PERIOD_END = "period-end"
+EV_STOPPAGE = "stoppage"
+EV_DELAYED_PENALTY = "delayed-penalty"
+EV_PERIOD_START = "period-start"
+# Events logged while the puck is dead, between a stoppage and its restart
+# faceoff (typeDescKeys seen in the cached PBP, surveyed 2026-10-18). Used by
+# segments.restart_event to find the faceoff that restarts play after a call.
+DEAD_PUCK_EVENTS = frozenset({EV_PENALTY, EV_STOPPAGE, EV_DELAYED_PENALTY, EV_PERIOD_START})
 UNBLOCKED_SHOT_EVENTS = frozenset({EV_GOAL, EV_SHOT, EV_MISS})
 ALL_SHOT_EVENTS = UNBLOCKED_SHOT_EVENTS | {EV_BLOCK}
 

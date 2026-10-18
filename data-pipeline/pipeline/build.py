@@ -23,6 +23,8 @@ import argparse
 import json
 import sqlite3
 import sys
+from collections import Counter
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 from typing import Any, Iterable
@@ -30,7 +32,7 @@ from typing import Any, Iterable
 from . import config, ratings, scenarios
 from .nhl_client import FetchError, NhlClient, SchemaError, need
 from .parse import ParseError, parse_events, parse_header, parse_roster
-from .segments import build_segments
+from .segments import STRENGTH_FROM_OPENER, build_segments
 
 ROOT = config.ROOT
 CURATED_PATH = ROOT / "data" / "curated_moments.json"
@@ -236,6 +238,7 @@ def _game_ids(client: NhlClient, seasons: Iterable[str], types: Iterable[int]) -
 
 def cmd_ingest(client: NhlClient, conn: sqlite3.Connection, seasons: list[str], types: list[int]) -> int:
     failures: list[str] = []
+    unresolved_events = unresolved_games = opener_strength = 0
     game_ids = _game_ids(client, seasons, types)
     print(f"{len(game_ids)} games to ingest")
     for n, gid in enumerate(game_ids, 1):
@@ -243,8 +246,11 @@ def cmd_ingest(client: NhlClient, conn: sqlite3.Connection, seasons: list[str], 
             pbp = client.pbp(gid)
             header = parse_header(pbp)
             roster = parse_roster(pbp)
-            segs = build_segments(header, parse_events(pbp, header))
+            events = parse_events(pbp, header)
+            segs = build_segments(header, events)
             has_shifts = _has_shifts(client, gid)
+            game_unresolved = sum(1 for e in events if e.side_unresolved)
+            opener_strength += sum(1 for x in segs if x.strength_source == STRENGTH_FROM_OPENER)
             with conn:
                 conn.execute("INSERT OR REPLACE INTO games VALUES (?,?,?,?,?,?,?,?,?)",
                              (header.game_id, ratings.season_of(gid), header.game_type, header.date,
@@ -260,11 +266,20 @@ def cmd_ingest(client: NhlClient, conn: sqlite3.Connection, seasons: list[str], 
                          s.end_t, s.strength, s.pp_score, s.pk_score, s.pp_remaining_s, s.outcome,
                          s.scorer_id, s.assist1_id, s.assist2_id, s.goalie_id,
                          scenarios.drama_score(d), json.dumps(d)))
+            if game_unresolved:
+                unresolved_events += game_unresolved
+                unresolved_games += 1
         except Exception as exc:  # noqa: BLE001 - one bad game must not abort an 11-season run;
             # always recorded with type+message below, never swallowed silently.
             failures.append(f"{gid}: {type(exc).__name__}: {exc}")
         if n % 250 == 0:
             print(f"  {n}/{len(game_ids)} games, {len(failures)} failures")
+    if unresolved_events:
+        print(f"{unresolved_events} event(s) in {unresolved_games} game(s) had no resolvable "
+              f"homeTeamDefendingSide; their x/y were left null")
+    if opener_strength:
+        print(f"{opener_strength} PP segment(s) had no restart faceoff after the opener (PP began in live play); "
+              f"their strength comes from the opening event")
     _report_failures(failures, "ingest")
     return 0 if not failures else 2
 
@@ -337,28 +352,108 @@ def cmd_curate(client: NhlClient, conn: sqlite3.Connection) -> int:
     return 0 if not failures else 2
 
 
-def cmd_schedule(conn: sqlite3.Connection, start: date) -> int:
-    curated = [sid for (sid,) in conn.execute("SELECT scenario_id FROM scenarios WHERE kind='curated' ORDER BY scenario_id")]
-    # Every segment carries its game's has_shifts flag so scenarios.playable()
-    # is the single rule that keeps shift-less games out of the pool.
+@dataclass
+class _GameCache:
+    header: Any
+    roster: dict[int, dict[str, Any]]
+    segments: dict[str, Any]          # segment_id -> PpSegment (rebuilt by the current segmenter)
+    shifts: list[scenarios.Shift]
+
+
+def _load_game(reader: Any, game_id: int) -> _GameCache:
+    """Rebuild one game's segments + shifts from the cache. Raises FetchError/SchemaError/ParseError. O(E + S)."""
+    pbp = reader.pbp(game_id)
+    header = parse_header(pbp)
+    segs = build_segments(header, parse_events(pbp, header))
+    return _GameCache(header, parse_roster(pbp), {scenarios.segment_id(x.to_dict()): x for x in segs},
+                      scenarios.parse_shifts(reader.shifts(game_id)))
+
+
+EXCLUDE_REASONS = ("cache_miss", "parse_error", "segment_not_rebuilt", "not_playable", "invalid")
+
+
+def build_mined(conn: sqlite3.Connection, reader: Any, limit: int = config.DAILY_POOL_SIZE
+                ) -> tuple[list[dict[str, Any]], list[tuple[str, str, str]]]:
+    """Mined scenarios in the full scenario shape, best drama first, plus exclusions.
+
+    Candidates are the DB segments that pass scenarios.playable(), in drama
+    order. Each is rebuilt from the cached pbp + shifts (the stored payload may
+    predate the current segmenter), re-checked with playable(), turned into a
+    scenario with scenario_from_segment() and validated. Any failure excludes
+    that candidate as (scenario_id, reason, message), reason in EXCLUDE_REASONS,
+    and the next candidate is tried until `limit` are built. Each built
+    scenario carries a "drama" key for the caller to pop.
+    O(N log N + G * (E + S)) for N segments and G distinct games touched.
+    """
     segs = [{**json.loads(payload), "has_shifts": bool(has_shifts)} for payload, has_shifts in conn.execute(
         "SELECT s.payload_json, g.has_shifts FROM pp_segments s JOIN games g USING(game_id)")]
-    mined = scenarios.mine(segs)
+    ordered = scenarios.mine(segs, limit=len(segs))
+    games: dict[int, Any] = {}        # game_id -> _GameCache, or the exception that loading it raised
+    built: list[dict[str, Any]] = []
+    excluded: list[tuple[str, str, str]] = []
+    for cand in ordered:
+        if len(built) >= limit:
+            break
+        sid = scenarios.segment_id(cand)
+        gid = int(cand["game_id"])
+        if gid not in games:
+            try:
+                games[gid] = _load_game(reader, gid)
+            except (FetchError, SchemaError, ParseError) as exc:
+                games[gid] = exc
+        game = games[gid]
+        if isinstance(game, Exception):
+            reason = "cache_miss" if isinstance(game, FetchError) else "parse_error"
+            excluded.append((sid, reason, f"{type(game).__name__}: {game}"))
+            continue
+        seg = game.segments.get(sid)
+        if seg is None:
+            excluded.append((sid, "segment_not_rebuilt", "the current segmenter no longer produces this segment"))
+            continue
+        fresh = {**seg.to_dict(), "has_shifts": cand["has_shifts"]}
+        if not scenarios.playable(fresh):
+            excluded.append((sid, "not_playable", f"after rebuild: pp_remaining_s={fresh['pp_remaining_s']}, "
+                                                  f"start_t={fresh['start_t']}, end_t={fresh['end_t']}"))
+            continue
+        scen = scenarios.scenario_from_segment(seg, game.header, game.roster, game.shifts, sid)
+        try:
+            scenarios.validate_scenario(scen)
+        except scenarios.ScenarioInvalid as exc:
+            excluded.append((sid, "invalid", str(exc)))
+            continue
+        scen["drama"] = scenarios.drama_score(fresh)
+        built.append(scen)
+    return built, excluded
+
+
+def cmd_schedule(conn: sqlite3.Connection, start: date, client: Any) -> int:
+    """Rebuild the mined pool (full scenario shape, from the cache only) and the Daily schedule.
+
+    An NhlClient is switched to cache_only so this stage never hits the network.
+    Exclusions are logged to data/schedule_failures.log and counted by reason.
+    """
+    reader = replace(client, cache_only=True) if isinstance(client, NhlClient) else client
+    curated = [sid for (sid,) in conn.execute("SELECT scenario_id FROM scenarios WHERE kind='curated' ORDER BY scenario_id")]
+    mined, excluded = build_mined(conn, reader)
     with conn:
         # Rebuild the mined pool from scratch: otherwise scenarios mined by an
         # earlier run under looser rules (e.g. zero-length PPs) would linger in
-        # the scenarios table and leak into endless_index.json.
-        conn.execute("DELETE FROM scenarios WHERE kind = 'mined'")
-        for s in mined:
-            sid = scenarios.segment_id(s)
-            payload = {k: v for k, v in s.items() if k != "has_shifts"}  # keep the exported shape unchanged
-            conn.execute("INSERT OR IGNORE INTO scenarios VALUES (?,?,?,?)",
-                         (sid, "mined", scenarios.drama_score(s), json.dumps(payload)))
+        # the scenarios table and leak into endless_index.json. daily_schedule
+        # references scenarios (FOREIGN KEY), so it is cleared first.
         conn.execute("DELETE FROM daily_schedule")
+        conn.execute("DELETE FROM scenarios WHERE kind = 'mined'")
+        for scen in mined:
+            drama = scen.pop("drama")
+            conn.execute("INSERT OR IGNORE INTO scenarios VALUES (?,?,?,?)",
+                         (scen["id"], "mined", drama, json.dumps(scen)))
         conn.executemany("INSERT INTO daily_schedule VALUES (?,?)",
                          [(d["date"], d["scenario_id"]) for d in
-                          scenarios.daily_schedule(curated, [scenarios.segment_id(s) for s in mined], start)])
-    print(f"schedule: {len(curated)} curated + {len(mined)} mined from {start.isoformat()}")
+                          scenarios.daily_schedule(curated, [x["id"] for x in mined], start)])
+    by_reason = Counter(reason for _, reason, _ in excluded)
+    detail = f" ({', '.join(f'{k} {v}' for k, v in sorted(by_reason.items()))})" if excluded else ""
+    print(f"schedule: {len(curated)} curated + {len(mined)} mined from {start.isoformat()}; "
+          f"{len(excluded)} excluded{detail}")
+    _report_failures([f"{sid}: {reason}: {msg}" for sid, reason, msg in excluded], "schedule")
     return 0
 
 
@@ -376,18 +471,39 @@ def cmd_export(conn: sqlite3.Connection, out: Path = config.EXPORT_DIR) -> int:
     dump("schedule.json", [{"date": d, "scenario_id": s} for d, s in conn.execute("SELECT * FROM daily_schedule ORDER BY play_date")])
     endless = [sid for (sid,) in conn.execute("SELECT scenario_id FROM scenarios ORDER BY scenario_id")]
     dump("endless_index.json", endless)
-    (out / "scenarios").mkdir(exist_ok=True)
+    scen_dir = out / "scenarios"
+    scen_dir.mkdir(exist_ok=True)
     for sid, payload in conn.execute("SELECT scenario_id, payload_json FROM scenarios"):
-        (out / "scenarios" / f"{sid}.json").write_text(payload, encoding="utf-8")
-    print(f"exported to {out}")
+        (scen_dir / f"{sid}.json").write_text(payload, encoding="utf-8")
+    removed = _remove_stale_scenarios(scen_dir, set(endless))
+    print(f"exported to {out} ({len(endless)} scenarios; removed {removed} stale scenario file(s))")
     return 0
 
 
+def _remove_stale_scenarios(scen_dir: Path, keep_ids: set[str]) -> int:
+    """Delete <scen_dir>/*.json whose stem is not a current scenario id; return the count. O(F).
+
+    Only regular *.json files directly inside scen_dir are touched: no
+    subdirectories, no other extensions, nothing outside the folder.
+    """
+    removed = 0
+    for f in scen_dir.glob("*.json"):
+        if f.is_file() and f.parent == scen_dir and f.stem not in keep_ids:
+            f.unlink()
+            removed += 1
+    return removed
+
+
 def _report_failures(failures: list[str], stage: str) -> None:
+    """Write data/<stage>_failures.log; on a zero-failure run truncate a stale one. O(F)."""
+    log = config.ROOT / "data" / f"{stage}_failures.log"
     if failures:
-        log = config.ROOT / "data" / f"{stage}_failures.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
         log.write_text("\n".join(failures), encoding="utf-8")
         print(f"{len(failures)} {stage} failures written to {log}", file=sys.stderr)
+    elif log.exists():
+        log.write_text("", encoding="utf-8")  # a stale log must never read as current
+        print(f"0 {stage} failures; truncated stale {log}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -423,7 +539,7 @@ def main(argv: list[str] | None = None) -> int:
                 return rc
             # rc 2 = some games failed (logged); later stages still run on what succeeded.
             results = [rc, cmd_ratings(conn), cmd_curate(client, conn),
-                       cmd_schedule(conn, date.fromisoformat(a.start)), cmd_export(conn)]
+                       cmd_schedule(conn, date.fromisoformat(a.start), client), cmd_export(conn)]
             status = {"stages": dict(zip(["ingest", "ratings", "curate", "schedule", "export"], results)),
                       "seasons": seasons, "types": a.types}
             (config.ROOT / "data" / "run_status.json").write_text(json.dumps(status, indent=2), encoding="utf-8")
@@ -434,7 +550,7 @@ def main(argv: list[str] | None = None) -> int:
         if a.cmd == "curate":
             return cmd_curate(client, conn)
         if a.cmd == "schedule":
-            return cmd_schedule(conn, date.fromisoformat(a.start))
+            return cmd_schedule(conn, date.fromisoformat(a.start), client)
         if a.cmd == "export":
             return cmd_export(conn)
     finally:
