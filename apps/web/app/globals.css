@@ -42,12 +42,23 @@
   --radius-lg: 14px;
   --radius-xl: 16px;
   --radius-sheet: 22px;
+  /* DESIGN.md v2: 6 chips + Estimate tag, 8 thumbnails, 18 Home Daily card, 20 Results banner, 999 pills */
+  --radius-chip: 6px;
+  --radius-thumb: 8px;
+  --radius-card: 18px;
+  --radius-banner: 20px;
+  --radius-pill: 999px;
 
   /* DESIGN.md: touch targets >= 44 px */
   --spacing-touch: 44px;
 
   --font-display: var(--font-barlow-condensed), "Arial Narrow", sans-serif;
   --font-body: var(--font-ibm-plex-sans), system-ui, sans-serif;
+}
+
+/* DESIGN.md v2: rink corners are 40 40 8 8 (top corners round, bottom nearly square) */
+@utility rounded-rink {
+  border-radius: 40px 40px 8px 8px;
 }
 
 body {

@@ -11,6 +11,8 @@ const isProduction = process.env.CONTEXT === undefined || process.env.CONTEXT ==
 const nextConfig: NextConfig = {
   // Monorepo: trace files from the repo root so workspace packages are included.
   outputFileTracingRoot: repoRoot,
+  // The engine ships as TypeScript source (.ts imports); Next must compile it.
+  transpilePackages: ["@powerplay/engine"],
   async headers() {
     if (isProduction) return [];
     return [{ source: "/:path*", headers: [{ key: "X-Robots-Tag", value: "noindex" }] }];

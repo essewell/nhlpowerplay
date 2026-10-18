@@ -1,0 +1,113 @@
+/**
+ * What is saved in localStorage for a run (v1 has no backend; docs/LAUNCH.md):
+ *   powerplay.v1.run.daily    StoredRun   latest Daily run (its `ended` flag is the "already played" lock)
+ *   powerplay.v1.run.endless  StoredRun   latest Endless run
+ *   powerplay.v1.endless.queue  QueueState  seed + how many scenarios were served (rebuilds EndlessQueue)
+ * A StoredRun is the replay key: (scenarioId, seed, calls) -> sim.replay gives the exact state.
+ *
+ * Reads validate shape and return Result (a corrupt value is an explicit error, never a silent
+ * default). Main thread only. All O(size of the value).
+ */
+import { err, ok, type Result } from "@powerplay/engine/result.ts";
+import { isCalendarDate } from "@powerplay/engine/schema.ts";
+import type { Call } from "@powerplay/engine/sim-types.ts";
+import type { Mode } from "../contracts.ts";
+import type { KeyValueStore } from "./store.ts";
+
+export const STORAGE_KEYS = {
+  run: (mode: Mode): string => `powerplay.v1.run.${mode}`,
+  queue: "powerplay.v1.endless.queue",
+} as const;
+
+export interface StoredRun {
+  v: 1;
+  mode: Mode;
+  /** Daily date the run started on (America/Vancouver); null for Endless. */
+  date: string | null;
+  scenarioId: string;
+  seed: number;
+  calls: Call[];
+  /** true once the run reached its end: for Daily this is the "no second attempt" lock and the result. */
+  ended: boolean;
+}
+
+export interface QueueState { v: 1; seed: number; served: number }
+
+const MAX_UINT32 = 0xffff_ffff;
+const SCENARIO_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+const CALL_TYPES: ReadonlySet<string> = new Set([
+  "pass", "skate", "shoot", "set_play", "faceoff", "zone_entry", "breakout",
+]);
+/** Upper bound on scenarios served from one queue seed; beyond this the value is treated as corrupt. */
+const MAX_SERVED = 1_000_000;
+/** Upper bound on stored calls (engine MAX_CALLS_PER_RUN is far lower); stops a corrupt value hanging a replay. */
+const MAX_STORED_CALLS = 1_000;
+
+const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null && !Array.isArray(x);
+const isUint32 = (x: unknown): x is number => typeof x === "number" && Number.isInteger(x) && x >= 0 && x <= MAX_UINT32;
+
+function parseJson(raw: string, label: string): Result<unknown> {
+  try {
+    return ok(JSON.parse(raw));
+  } catch (e) {
+    return err(`${label}: invalid JSON: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+/** Shape check only; the engine validates call contents when it replays. O(calls). */
+export function parseStoredRun(raw: unknown, mode: Mode): Result<StoredRun> {
+  const label = STORAGE_KEYS.run(mode);
+  if (!isRecord(raw)) return err(`${label}: not an object`);
+  if (raw.v !== 1) return err(`${label}: unsupported version ${String(raw.v)}`);
+  if (raw.mode !== mode) return err(`${label}: mode is ${String(raw.mode)}`);
+  const date = raw.date;
+  if (date !== null && !(typeof date === "string" && isCalendarDate(date))) return err(`${label}: bad date`);
+  if (mode === "daily" && date === null) return err(`${label}: a daily run needs a date`);
+  if (typeof raw.scenarioId !== "string" || !SCENARIO_ID_RE.test(raw.scenarioId)) return err(`${label}: bad scenarioId`);
+  if (!isUint32(raw.seed)) return err(`${label}: bad seed`);
+  if (typeof raw.ended !== "boolean") return err(`${label}: bad ended flag`);
+  const calls = raw.calls;
+  if (!Array.isArray(calls) || calls.length > MAX_STORED_CALLS) return err(`${label}: bad calls`);
+  for (const c of calls) {
+    if (!isRecord(c) || typeof c.type !== "string" || !CALL_TYPES.has(c.type)) return err(`${label}: bad call`);
+  }
+  return ok({
+    v: 1, mode, date, scenarioId: raw.scenarioId, seed: raw.seed, calls: calls as Call[], ended: raw.ended,
+  });
+}
+
+/** Ok(null) when nothing is stored; Err when something is stored but unusable. */
+export function readRun(store: KeyValueStore, mode: Mode): Result<StoredRun | null> {
+  const raw = store.get(STORAGE_KEYS.run(mode));
+  if (raw === null) return ok(null);
+  const json = parseJson(raw, STORAGE_KEYS.run(mode));
+  if (!json.ok) return json;
+  const run = parseStoredRun(json.value, mode);
+  return run.ok ? ok(run.value) : run;
+}
+
+/** false when the browser refused the write (the in-session copy is still kept by the store). */
+export function writeRun(store: KeyValueStore, run: StoredRun): boolean {
+  return store.set(STORAGE_KEYS.run(run.mode), JSON.stringify(run));
+}
+
+export function clearRun(store: KeyValueStore, mode: Mode): void {
+  store.remove(STORAGE_KEYS.run(mode));
+}
+
+export function readQueue(store: KeyValueStore): Result<QueueState | null> {
+  const raw = store.get(STORAGE_KEYS.queue);
+  if (raw === null) return ok(null);
+  const json = parseJson(raw, STORAGE_KEYS.queue);
+  if (!json.ok) return json;
+  const q = json.value;
+  if (!isRecord(q) || q.v !== 1 || !isUint32(q.seed)) return err(`${STORAGE_KEYS.queue}: bad shape`);
+  if (typeof q.served !== "number" || !Number.isInteger(q.served) || q.served < 0 || q.served > MAX_SERVED) {
+    return err(`${STORAGE_KEYS.queue}: bad served count`);
+  }
+  return ok({ v: 1, seed: q.seed, served: q.served });
+}
+
+export function writeQueue(store: KeyValueStore, q: QueueState): boolean {
+  return store.set(STORAGE_KEYS.queue, JSON.stringify(q));
+}

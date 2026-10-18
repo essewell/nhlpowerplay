@@ -11,12 +11,14 @@
     "start": "next start",
     "typecheck": "next typegen && tsc --noEmit",
     "lint": "eslint .",
-    "test": "node --test \"test/*.test.ts\""
+    "test": "node --test \"test/*.test.ts\" \"lib/**/*.test.ts\""
   },
   "dependencies": {
+    "@powerplay/engine": "workspace:*",
     "next": "^16.4",
     "react": "^19",
-    "react-dom": "^19"
+    "react-dom": "^19",
+    "xstate": "^5.33"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3",

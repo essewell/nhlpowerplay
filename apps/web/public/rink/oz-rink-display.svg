@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-42.5 0 85 77" role="img" aria-label="Offensive zone rink diagram">
+<title>Offensive zone (display weight), 1 unit = 1 ft</title>
+
+<defs><clipPath id="rk"><path d="M-14.5 0H14.5A28 28 0 0 1 42.5 28V77H-42.5V28A28 28 0 0 1 -14.5 0Z"></path></clipPath></defs>
+<g clip-path="url(#rk)">
+<rect x="-42.5" y="0" width="85" height="77" fill="#DCE6EF"></rect>
+<g id="goal-line"><line x1="-42.5" y1="11" x2="42.5" y2="11" stroke="#C8102E" stroke-width="0.5"></line></g>
+<g id="trapezoid"><path d="M-11 11L-14 0M11 11L14 0" stroke="#C8102E" stroke-width="0.5"></path></g>
+<g id="crease"><path d="M-4 11V15.472A6 6 0 0 0 4 15.472V11Z" fill="#9CCBFF" fill-opacity="0.55" stroke="#C8102E" stroke-width="0.5"></path></g>
+<g id="net"><path d="M-3 11V9.2Q-3 7.67 -1.5 7.67H1.5Q3 7.67 3 9.2V11" fill="none" stroke="#C8102E" stroke-width="0.5"></path></g>
+<g id="faceoff-circles"><circle cx="-22" cy="31" r="15" fill="none" stroke="#C8102E" stroke-width="0.5"></circle>
+<circle cx="-22" cy="31" r="1" fill="#C8102E"></circle>
+<line x1="-36.722" y1="28.125" x2="-38.722" y2="28.125" stroke="#C8102E" stroke-width="0.5"></line>
+<path d="M-28 30.25H-24V27.25" fill="none" stroke="#C8102E" stroke-width="0.5"></path>
+<line x1="-36.722" y1="33.875" x2="-38.722" y2="33.875" stroke="#C8102E" stroke-width="0.5"></line>
+<path d="M-28 31.75H-24V34.75" fill="none" stroke="#C8102E" stroke-width="0.5"></path>
+<line x1="-7.278" y1="28.125" x2="-5.278" y2="28.125" stroke="#C8102E" stroke-width="0.5"></line>
+<path d="M-16 30.25H-20V27.25" fill="none" stroke="#C8102E" stroke-width="0.5"></path>
+<line x1="-7.278" y1="33.875" x2="-5.278" y2="33.875" stroke="#C8102E" stroke-width="0.5"></line>
+<path d="M-16 31.75H-20V34.75" fill="none" stroke="#C8102E" stroke-width="0.5"></path>
+<circle cx="22" cy="31" r="15" fill="none" stroke="#C8102E" stroke-width="0.5"></circle>
+<circle cx="22" cy="31" r="1" fill="#C8102E"></circle>
+<line x1="7.278" y1="28.125" x2="5.278" y2="28.125" stroke="#C8102E" stroke-width="0.5"></line>
+<path d="M16 30.25H20V27.25" fill="none" stroke="#C8102E" stroke-width="0.5"></path>
+<line x1="7.278" y1="33.875" x2="5.278" y2="33.875" stroke="#C8102E" stroke-width="0.5"></line>
+<path d="M16 31.75H20V34.75" fill="none" stroke="#C8102E" stroke-width="0.5"></path>
+<line x1="36.722" y1="28.125" x2="38.722" y2="28.125" stroke="#C8102E" stroke-width="0.5"></line>
+<path d="M28 30.25H24V27.25" fill="none" stroke="#C8102E" stroke-width="0.5"></path>
+<line x1="36.722" y1="33.875" x2="38.722" y2="33.875" stroke="#C8102E" stroke-width="0.5"></line>
+<path d="M28 31.75H24V34.75" fill="none" stroke="#C8102E" stroke-width="0.5"></path></g>
+<g id="blue-line"><rect x="-42.5" y="75" width="85" height="1" fill="#2F6FD6"></rect></g>
+</g>
+</svg>

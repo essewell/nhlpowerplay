@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "pnpm --filter @powerplay/web dev",
     "build": "pnpm --filter @powerplay/web build",
+    "data:dev": "node apps/web/scripts/data-dev.ts",
     "data:sync": "node apps/web/scripts/data-sync.ts",
     "data:report": "node apps/web/scripts/data-sync.ts --report",
     "test:engine": "node --test \"packages/engine/src/*.test.ts\"",
