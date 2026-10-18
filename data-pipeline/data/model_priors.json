@@ -1,0 +1,31 @@
+{
+  "_readme": "Priors the engine needs that public NHL play-by-play cannot provide. Public PBP has shot location on the ice and shot type, but NOT where the puck entered the net and NOT passes. Every value here is either cited or flagged ASSUMPTION and must be tuned in playtesting.",
+  "net_zones": {
+    "zones": ["high_glove", "high_blocker", "low_glove", "low_blocker", "five_hole"],
+    "cited_goal_share": {
+      "high_glove": {
+        "value": 0.236,
+        "scope": "share of 8,000+ goals tracked since 2017 (all strengths)",
+        "source": "https://www.nhl.com/news/4-nations-face-off-goalie-breakdown-finland"
+      },
+      "high_blocker": {
+        "value": 0.183,
+        "scope": "tracked average share of goals (all strengths)",
+        "source": "https://www.nhl.com/news/topic/olympics/team-finland-goalie-breakdown-for-milano-cortina-olympics"
+      },
+      "high_glove_power_play": {
+        "value": 0.23,
+        "scope": "share of PP goals entering top glove side, per NHL data as reported",
+        "source": "https://thibaudchatel.substack.com/p/do-goalies-have-a-weaker-side"
+      },
+      "low_glove": null,
+      "low_blocker": null,
+      "five_hole": null
+    },
+    "note": "Goal shares are not conversion rates: without the share of SHOTS aimed at each zone, P(goal | zone) cannot be derived. The engine therefore uses the ASSUMPTION multipliers in packages/engine/src/constants.ts and the calibration target is: under a plausible aiming mix, simulated goal shares land near the cited shares."
+  },
+  "passes": {
+    "status": "ASSUMPTION",
+    "note": "No public NHL pass data. Pass-completion coefficients in packages/engine/src/constants.ts are placeholders to be fitted on Stathletes Big Data Cup passes (https://stathletes.com/big-data-cup)."
+  }
+}

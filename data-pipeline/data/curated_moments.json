@@ -1,0 +1,145 @@
+{
+  "_readme": "Only facts confirmed in the cited sources are filled in. null = not verified from a source; the pipeline fills it from NHL play-by-play and `build.py curate` refuses any moment whose stated facts disagree with the data. Times are elapsed time in the period (MM:SS). Period 4 = first overtime.",
+  "verified_on": "2026-10-18",
+  "moments": [
+    {
+      "id": "2025-scf-g1-edm-draisaitl-ot",
+      "title": "Draisaitl's late-OT power-play winner, Stanley Cup Final Game 1",
+      "date": "2025-06-04",
+      "teams": ["EDM", "FLA"],
+      "pp_team": "EDM",
+      "stage": "SCF",
+      "period": 4,
+      "penalty_time": "18:17",
+      "goal_time": "19:29",
+      "scorer_last": "Draisaitl",
+      "score_before": {"pp": 3, "pk": 3},
+      "real_outcome": "goal",
+      "verified_facts": [
+        "Nosek (FLA) delay of game at 18:17 of OT for clearing the puck over the glass",
+        "Draisaitl PP goal at 19:29 of the first OT, from McDavid, 4-3 EDM",
+        "Bobrovsky in goal for FLA"
+      ],
+      "sources": [
+        "https://www.boundarycreektimes.com/sports/draisaitl-scores-in-ot-as-oilers-open-cup-final-with-4-3-win-over-panthers-8052095",
+        "https://www.wptv.com/sports/hockey/panthers/oilers-defeat-panthers-during-overtime-in-game-1-of-stanley-cup-final"
+      ]
+    },
+    {
+      "id": "2020-scf-g6-tbl-point-clincher",
+      "title": "Point opens the Cup-clinching game on the power play, Stanley Cup Final Game 6",
+      "date": "2020-09-28",
+      "teams": ["TBL", "DAL"],
+      "pp_team": "TBL",
+      "stage": "SCF",
+      "period": 1,
+      "penalty_time": null,
+      "goal_time": "12:23",
+      "scorer_last": "Point",
+      "score_before": {"pp": 0, "pk": 0},
+      "real_outcome": "goal",
+      "verified_facts": [
+        "Point PP goal 12:23 into the game, assists Kucherov and Hedman",
+        "Heiskanen (DAL) in the box",
+        "TBL led 1-0 after the first period"
+      ],
+      "sources": [
+        "https://www.krgv.com/news/sports-minute-point-scores-lightning-lead-stars-1-0-after-1st-in-game-6",
+        "https://www.krgv.com/news/sports-minute-lightning-up-2-0-on-stars-20-minutes-from-stanley-cup"
+      ]
+    },
+    {
+      "id": "2020-scf-g2-tbl-hedman-kucherov-point",
+      "title": "Hedman to Kucherov to Point: the power play wakes up, Stanley Cup Final Game 2",
+      "date": "2020-09-21",
+      "teams": ["TBL", "DAL"],
+      "pp_team": "TBL",
+      "stage": "SCF",
+      "period": 1,
+      "penalty_time": null,
+      "goal_time": "11:23",
+      "scorer_last": "Point",
+      "score_before": {"pp": 0, "pk": 0},
+      "real_outcome": "goal",
+      "verified_facts": [
+        "At 11:23, Hedman to Kucherov, Kucherov redirects to Point in the slot",
+        "Point beat Khudobin high glove side through traffic",
+        "Opening goal of the game"
+      ],
+      "sources": [
+        "https://cfjctoday.com/2020/09/21/lightning-strike-twice-on-power-play-beat-dallas-3-2-to-even-stanley-cup-final/",
+        "https://www.krgv.com/news/sports-minute-lightning-3-0-lead-over-dallas-after-1st-in-stanley-cup-g2"
+      ]
+    },
+    {
+      "id": "2018-scf-g5-wsh-ovechkin",
+      "title": "Ovechkin from his office in the Cup-clinching game, Stanley Cup Final Game 5",
+      "date": "2018-06-07",
+      "teams": ["WSH", "VGK"],
+      "pp_team": "WSH",
+      "stage": "SCF",
+      "period": 2,
+      "penalty_time": null,
+      "goal_time": null,
+      "scorer_last": "Ovechkin",
+      "score_before": {"pp": 1, "pk": 1},
+      "real_outcome": "goal",
+      "verified_facts": [
+        "McNabb (VGK) tripping penalty on Ovechkin",
+        "Ovechkin one-timer PP goal 34 seconds after Schmidt tied it, 2-1 WSH",
+        "Backstrom saucer pass through traffic set it up"
+      ],
+      "sources": [
+        "https://www.lasvegasadvisor.com/vegas-with-an-edge/knights-on-ice-in-just-2-31/",
+        "https://russianmachineneverbreaks.com/2026/06/07/washington-capitals-stanley-cup-champions-2018-this-day-history/",
+        "https://www.nbcwashington.com/news/sports/nbcsports/alex-ovechkin-recounts-his-favorite-assist-from-nicklas-backstrom/2641556/?amp=1"
+      ]
+    },
+    {
+      "id": "2022-r1-g7-nyr-panarin-ot",
+      "title": "Panarin ends Game 7 in overtime on the power play",
+      "date": "2022-05-15",
+      "teams": ["NYR", "PIT"],
+      "pp_team": "NYR",
+      "stage": "P",
+      "period": 4,
+      "penalty_time": "2:55",
+      "goal_time": "4:46",
+      "scorer_last": "Panarin",
+      "score_before": {"pp": 3, "pk": 3},
+      "real_outcome": "goal",
+      "verified_facts": [
+        "McGinn (PIT) holding at 2:55 of OT",
+        "Panarin PP goal at 4:46 of OT from the right circle past Jarry, 4-3 NYR",
+        "First-round Game 7"
+      ],
+      "sources": [
+        "https://www.pressreader.com/usa/kane-republican/20220516/281616718969388",
+        "https://www.news4jax.com/sports/2022/05/16/panarin-lifts-rangers-past-penguins-4-3-in-ot-in-game-7/"
+      ]
+    },
+    {
+      "id": "2016-scf-g6-pit-first-pp",
+      "title": "Penguins strike on the first power play of the Cup-clinching game, Stanley Cup Final Game 6",
+      "date": "2016-06-12",
+      "teams": ["PIT", "SJS"],
+      "pp_team": "PIT",
+      "stage": "SCF",
+      "period": 1,
+      "penalty_time": "7:50",
+      "goal_time": null,
+      "scorer_last": null,
+      "score_before": null,
+      "real_outcome": "goal",
+      "verified_facts": [
+        "Zubrus (SJS) tripping at 7:50 of the first period gave PIT its first PP",
+        "PIT scored on that power play",
+        "PIT won 3-1 to win the Cup"
+      ],
+      "sources": [
+        "https://bladesofteal.com/2016/06/13/san-jose-sharks-season-ends-game-6-loss/",
+        "https://www.fearthefin.com/2016-stanley-cup-final-game-6-quick-bite-penguins-end-sharks-season-win-cup/"
+      ]
+    }
+  ]
+}
