@@ -67,13 +67,14 @@ test("untilNextDaily edge: exactly midnight starts a full new day", () => {
 });
 
 test("untilNextDaily edge: spring-forward day is 23 hours long", () => {
-  // Pacific DST starts on the second Sunday of March; 2099-03-08 is that Sunday. 00:00 PST = 08:00Z.
-  assert.deepEqual(untilNextDaily(new Date("2099-03-08T08:00:00Z")), { h: 23, m: 0 });
+  // Pacific DST starts on the second Sunday of March: 2027-03-14. 00:00 PST = 08:00Z.
+  // Near-term dates on purpose: far-future tz rules differ between ICU builds (CI vs local).
+  assert.deepEqual(untilNextDaily(new Date("2027-03-14T08:00:00Z")), { h: 23, m: 0 });
 });
 
 test("untilNextDaily edge: fall-back day is 25 hours long", () => {
-  // DST ends on the first Sunday of November; 2099-11-01. 00:00 PDT = 07:00Z.
-  assert.deepEqual(untilNextDaily(new Date("2099-11-01T07:00:00Z")), { h: 25, m: 0 });
+  // DST ends on the first Sunday of November: 2026-11-01. 00:00 PDT = 07:00Z.
+  assert.deepEqual(untilNextDaily(new Date("2026-11-01T07:00:00Z")), { h: 25, m: 0 });
 });
 
 test("streakText: counts shown, no history falls back to the prompt", () => {
