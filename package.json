@@ -1,0 +1,21 @@
+{
+  "name": "powerplay",
+  "private": true,
+  "packageManager": "pnpm@10.4.1",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @powerplay/web dev",
+    "build": "pnpm --filter @powerplay/web build",
+    "test:engine": "node --test \"packages/engine/src/*.test.ts\"",
+    "test:web": "pnpm --filter @powerplay/web test",
+    "test:pipeline": "cd data-pipeline && python -m unittest discover -s pipeline/tests -t .",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "typescript": "~6.0.3"
+  }
+}

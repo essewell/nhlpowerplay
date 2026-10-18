@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens. Source of truth: docs/DESIGN.md (Tokens table).
+ * test/tokens.test.ts fails if any colour here drifts from that table.
+ */
+@theme {
+  --color-bg: #0B1220;
+  --color-surface: #131C2E;
+  --color-surface-sunk: #0F1828;
+  --color-border: #26324A;
+  --color-text: #EEF3F7;
+  --color-text-muted: #B7C3D3;
+  --color-accent: #FF8A2B;
+  --color-on-accent: #1A0E04;
+  --color-pp: #9CCBFF;
+  --color-pp-fill: #13305A;
+  --color-pk: #5E6B7D;
+  --color-ice: #DCE6EF;
+  --color-rink-red: #C8102E;
+  --color-blue-line: #2F6FD6;
+  --color-grade-best: #2E9E6B;
+  --color-grade-close: #E8C547;
+  --color-grade-costly: #E07A2E;
+  --color-grade-miss: #8E1F35;
+
+  /* DESIGN.md: radii 10 / 12 / 14 / 16 / 22 */
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+  --radius-xl: 16px;
+  --radius-sheet: 22px;
+
+  /* DESIGN.md: touch targets >= 44 px */
+  --spacing-touch: 44px;
+
+  --font-display: var(--font-barlow-condensed), "Arial Narrow", sans-serif;
+  --font-body: var(--font-ibm-plex-sans), system-ui, sans-serif;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+}
