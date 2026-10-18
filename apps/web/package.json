@@ -11,7 +11,8 @@
     "start": "next start",
     "typecheck": "next typegen && tsc --noEmit",
     "lint": "eslint .",
-    "test": "node --test \"test/*.test.ts\" \"lib/**/*.test.ts\""
+    "test": "node --test \"test/*.test.ts\" \"lib/**/*.test.ts\"",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@powerplay/engine": "workspace:*",
@@ -21,6 +22,8 @@
     "xstate": "^5.33"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
+    "@playwright/test": "1.64.1",
     "@tailwindcss/postcss": "^4.3",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

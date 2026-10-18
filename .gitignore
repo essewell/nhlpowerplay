@@ -12,3 +12,7 @@ data-pipeline/data/raw/
 data-pipeline/data/powerplay.db
 data-pipeline/data/*.log
 data-pipeline/data/run_status.json
+
+# Playwright
+apps/web/test-results/
+apps/web/playwright-report/

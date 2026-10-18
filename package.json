@@ -15,7 +15,8 @@
     "test:web": "pnpm --filter @powerplay/web test",
     "test:pipeline": "cd data-pipeline && python -m unittest discover -s pipeline/tests -t .",
     "typecheck": "pnpm -r typecheck",
-    "lint": "pnpm -r lint"
+    "lint": "pnpm -r lint",
+    "test:e2e": "pnpm --filter @powerplay/web e2e"
   },
   "devDependencies": {
     "@types/node": "^24",

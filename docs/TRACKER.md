@@ -8,7 +8,7 @@ Owned by Claude Code. One row per step in docs/KICKOFF.md; a step is done only w
 | 1 Scaffold monorepo | CI green; `pnpm dev` serves empty home page in design colours and fonts | done | 2026-10-18 | CI run 39161201119 green on 32d4cec (engine, pipeline, web). Home verified at 390 px: bg #0B1220, Barlow Condensed 700, IBM Plex Sans. Repo: github.com/essewell/nhlpowerplay, default branch main |
 | 2 Engine sim core | determinism test + 10k fuzz pass; Big-O comments present | done | 2026-10-18 | CI green on f0e45f5. 338 engine tests in ~7 s: 10k fuzz over 11 fixtures with zero errors, determinism + replay + JSON resume, calibration within 2 sigma. engine-reviewer: gate passes after roster fix. XState run machine. |
 | 3 Data into the app | all exported files validate; a scenario loads in a unit test | not started | | export not ready yet: use synthetic dev fixtures |
-| 4 Screens | Playwright mobile test plays the Daily start to finish; axe shows no contrast errors | not started | | |
+| 4 Screens | Playwright mobile test plays the Daily start to finish; axe shows no contrast errors | done (CI pending) | 2026-10-18 | 21 e2e tests at 390x844 touch on synthetic dev data: Daily start to finish + one-attempt lock, axe zero violations on all pages incl. decision pause and results, all targets >= 44 px. Grades are a Step 5 stub; PENDING copy in apps/web/lib/PENDING_COPY.md + lib/play/strings.ts for Cowork. Real data pending stage 3 rerun |
 | 5 Grader, results, share | one pause grades in <150 ms on a mid-range phone profile | not started | | |
 | 6 Backend | server score equals client score on 1,000 fuzzed runs; RLS tests pass | not started | | |
 | 7 Deploy | the 5-step audit in CLAUDE.md passes on the preview URL | not started | | |
