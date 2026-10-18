@@ -16,5 +16,8 @@
     "eslint": "^9",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.71.2"
+  },
+  "dependencies": {
+    "xstate": "^5.33"
   }
 }
