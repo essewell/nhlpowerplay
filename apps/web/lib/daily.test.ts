@@ -11,7 +11,7 @@ const schedule = [
 const pool = [SCENARIO_A, SCENARIO_B, SCENARIO_C];
 
 test("daily: today in Vancouver, scenario and number come from the schedule", async () => {
-  // 2099-01-02 12:00 UTC is 04:00 on Jan 2 in Vancouver (PST, UTC-8).
+  // 2099-01-02 12:00 UTC is Jan 2 in Vancouver under any tz release (UTC-8 or UTC-7).
   const r = await getDaily(fixtureSource(), new Date("2099-01-02T12:00:00Z"));
   assert.equal(r.status, "ready");
   if (r.status !== "ready") return;
@@ -21,13 +21,13 @@ test("daily: today in Vancouver, scenario and number come from the schedule", as
 });
 
 test("daily edge: Vancouver midnight rollover (winter, PST)", () => {
-  assert.equal(vancouverDate(new Date("2099-01-02T07:59:59Z")), "2099-01-01", "23:59:59 Vancouver");
-  assert.equal(vancouverDate(new Date("2099-01-02T08:00:00Z")), "2099-01-02", "00:00:00 Vancouver");
+  assert.equal(vancouverDate(new Date("2024-01-02T07:59:59Z")), "2024-01-01", "23:59:59 Vancouver");
+  assert.equal(vancouverDate(new Date("2024-01-02T08:00:00Z")), "2024-01-02", "00:00:00 Vancouver");
 });
 
 test("daily edge: Vancouver midnight rollover (summer, PDT) and DST switch days", () => {
-  assert.equal(vancouverDate(new Date("2099-07-02T06:59:59Z")), "2099-07-01");
-  assert.equal(vancouverDate(new Date("2099-07-02T07:00:00Z")), "2099-07-02");
+  assert.equal(vancouverDate(new Date("2024-07-02T06:59:59Z")), "2024-07-01");
+  assert.equal(vancouverDate(new Date("2024-07-02T07:00:00Z")), "2024-07-02");
   // Spring-forward day (2nd Sunday of March): the date still advances exactly once.
   assert.equal(vancouverDate(new Date("2025-03-09T07:59:59Z")), "2025-03-08");
   assert.equal(vancouverDate(new Date("2025-03-09T08:00:00Z")), "2025-03-09");
@@ -36,7 +36,7 @@ test("daily edge: Vancouver midnight rollover (summer, PDT) and DST switch days"
 });
 
 test("daily edge: UTC date differs from Vancouver date late in the evening", () => {
-  assert.equal(vancouverDate(new Date("2099-01-03T02:00:00Z")), "2099-01-02");
+  assert.equal(vancouverDate(new Date("2024-01-03T02:00:00Z")), "2024-01-02");
 });
 
 test("daily edge: date outside the schedule uses the deterministic pick and day offset", () => {

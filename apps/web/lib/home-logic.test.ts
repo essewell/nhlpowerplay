@@ -53,20 +53,22 @@ test("stageLine: stage plus game number, stage alone, nothing", () => {
 });
 
 test("untilNextDaily: 18:00 Pacific on an ordinary day -> 6h 0m", () => {
-  // 2099-03-02 18:00 PST = 2099-03-03T02:00Z
-  assert.deepEqual(untilNextDaily(new Date("2099-03-03T02:00:00Z")), { h: 6, m: 0 });
+  // 2024-03-02 18:00 PST = 2024-03-03T02:00Z
+  assert.deepEqual(untilNextDaily(new Date("2024-03-03T02:00:00Z")), { h: 6, m: 0 });
 });
 
 test("untilNextDaily edge: rounds up to the next minute, never 0h 0m while time is left", () => {
-  // 23:59:30 PST on 2099-03-02 = 2099-03-03T07:59:30Z
-  assert.deepEqual(untilNextDaily(new Date("2099-03-03T07:59:30Z")), { h: 0, m: 1 });
+  // 23:59:30 PST on 2024-03-02 = 2024-03-03T07:59:30Z
+  assert.deepEqual(untilNextDaily(new Date("2024-03-03T07:59:30Z")), { h: 0, m: 1 });
 });
 
 test("untilNextDaily edge: exactly midnight starts a full new day", () => {
-  assert.deepEqual(untilNextDaily(new Date("2099-03-03T08:00:00Z")), { h: 24, m: 0 });
+  assert.deepEqual(untilNextDaily(new Date("2024-03-03T08:00:00Z")), { h: 24, m: 0 });
 });
 
-// DST days use 2024 transitions, which every tz release agrees on. Future Pacific rules differ between
+// Countdown cases use 2024 dates, which every tz release agrees on. From 2026-11-01 newer tz data has
+// America/Vancouver on permanent UTC-7 (BC), older data keeps DST, so future dates are not portable.
+// DST days use 2024 transitions. Future Pacific rules differ between
 // tz releases (CI's Node and this PC disagree about 2026-11-01), and the countdown simply follows the
 // runtime's own tz data, which is the browser's in production.
 test("untilNextDaily edge: spring-forward day (2024-03-10) is 23 hours long", () => {
