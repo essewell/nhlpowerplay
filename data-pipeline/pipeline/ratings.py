@@ -32,12 +32,21 @@ UNKNOWN_TYPE = "unknown"
 def season_of(game_id: int) -> str:
     """2023020204 -> '20232024'. ID layout: YYYY TT NNNN (season start year, game type, number).
 
-    Matches the example IDs in the Zmalski reference; validated against config.SEASONS.
+    Matches the example IDs in the Zmalski reference; validated against the
+    scope of the id's own game type (config.seasons_for_type), so a 2009-10
+    playoff game is in scope while a 2009-10 regular-season game is not.
+    Raises ValueError for an out-of-scope season or an unknown game type. O(1).
     """
     year = game_id // 1_000_000
+    game_type = (game_id // 10_000) % 100
     season = f"{year}{year + 1}"
-    if season not in config.SEASONS:
-        raise ValueError(f"game {game_id} maps to season {season} outside configured scope")
+    try:
+        scope = config.seasons_for_type(game_type)
+    except ValueError as exc:
+        raise ValueError(f"game {game_id}: {exc}") from exc
+    if season not in scope:
+        raise ValueError(f"game {game_id} maps to season {season} outside configured scope "
+                         f"for game type {game_type}")
     return season
 
 

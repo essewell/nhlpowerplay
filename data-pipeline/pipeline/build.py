@@ -97,6 +97,12 @@ def cmd_probe(client: NhlClient, game_id: int, on_date: str) -> int:
         except (FetchError, SchemaError, ParseError) as exc:
             missing.append(f"legacy-game {config.PROBE_LEGACY_GAME_ID}: {exc}")
 
+    # Early-era playoff games at the start of the playoff scope: report field
+    # coverage (shifts, situationCode, coordinates, defending side) every run.
+    for era_gid, era_date in config.PROBE_ERA_GAMES:
+        if era_gid != game_id:
+            missing.extend(_probe_era_game(client, era_gid, era_date))
+
     if missing:
         print("PROBE FAILED:\n  " + "\n  ".join(missing), file=sys.stderr)
         return 1
@@ -104,8 +110,110 @@ def cmd_probe(client: NhlClient, game_id: int, on_date: str) -> int:
     return 0
 
 
+def probe_key_report(responses: dict[str, Any], names: Iterable[str] | None = None) -> dict[str, dict[str, bool]]:
+    """{response name: {PROBE_PATHS key path: present?}} for the named responses.
+
+    Raises KeyError for a name that is not in PROBE_PATHS or not in responses.
+    O(total length of the checked paths).
+    """
+    report: dict[str, dict[str, bool]] = {}
+    for name in (list(PROBE_PATHS) if names is None else list(names)):
+        paths = PROBE_PATHS[name]
+        body = responses[name]
+        report[name] = {}
+        for p in paths:
+            try:
+                need(body, p)
+                report[name][p] = True
+            except SchemaError:
+                report[name][p] = False
+    return report
+
+
+def era_coverage(pbp: dict[str, Any], shifts_raw: Any) -> dict[str, int]:
+    """Counts of the fields older seasons may lack. O(P + S) over P plays, S shift rows.
+
+    shift_rows counts rows that parse into real shifts (goal rows carry no
+    times), so an empty or goal-only chart reports 0, matching ingest's has_shifts.
+    Raises SchemaError if pbp has no plays list or the shift chart has no data list.
+    """
+    plays = need(pbp, "plays")
+    return {
+        "plays": len(plays),
+        "with_situation_code": sum(1 for p in plays if p.get("situationCode") is not None),
+        "with_coordinates": sum(1 for p in plays if isinstance(p.get("details"), dict)
+                                and "xCoord" in p["details"] and "yCoord" in p["details"]),
+        "with_home_defending_side": sum(1 for p in plays if p.get("homeTeamDefendingSide") is not None),
+        "shift_rows": len(scenarios.parse_shifts(shifts_raw)),
+    }
+
+
+def _probe_era_game(client: Any, game_id: int, on_date: str) -> list[str]:
+    """Probe one early-era game; return failure lines (empty when fine).
+
+    Fails on: a fetch error, a missing pbp key path, a parse error, or the game
+    not being listed by score-by-date on on_date (wrong id/date pairing).
+    Missing shift-chart paths are reported as coverage, not failures: games
+    without shifts are kept for ratings and excluded from the mined pool.
+    """
+    label = f"era-game {game_id}"
+    try:
+        pbp = client.pbp(game_id)
+        shifts_raw = client.shifts(game_id)
+        listed = {int(need(g, "id")) for g in need(client.score_by_date(on_date), "games")}
+    except (FetchError, SchemaError) as exc:
+        return [f"{label}: {exc}"]
+    failures: list[str] = []
+    if game_id not in listed:
+        failures.append(f"{label}: not listed by score-by-date on {on_date}")
+    for name, paths in probe_key_report({"pbp": pbp, "shifts": shifts_raw}, names=("pbp", "shifts")).items():
+        for p, present in paths.items():
+            print(f"  {label} {name}: {p}: {'present' if present else 'ABSENT'}")
+            if name == "pbp" and not present:
+                failures.append(f"{label} pbp: missing '{p}'")
+    try:
+        header = parse_header(pbp)
+        events = parse_events(pbp, header)
+        segs = build_segments(header, events)
+        cov = era_coverage(pbp, shifts_raw)
+    except (SchemaError, ParseError) as exc:
+        return failures + [f"{label} parse: {exc}"]
+    note = "" if cov["shift_rows"] else " -> NO SHIFTS: kept for ratings, excluded from the mined pool"
+    print(f"parsed {len(events)} events, {len(segs)} PP segments in {label} ({header.date}); "
+          + ", ".join(f"{k}={v}" for k, v in cov.items()) + note)
+    return failures
+
+
+def resolve_seasons(spec: str, types: list[int]) -> list[str]:
+    """Turn the --seasons argument into season ids for the requested game types.
+
+    "all" is the union of every requested type's scope (playoffs start at
+    config.PLAYOFF_FIRST_SEASON_START_YEAR, regular seasons at
+    config.FIRST_SEASON_START_YEAR). An explicit season must be in scope for at
+    least one requested type. Raises ValueError on an unknown type, an empty
+    type list, or an out-of-scope season. O(T * S).
+    """
+    if not types:
+        raise ValueError("no game types given")
+    scopes = {gt: config.seasons_for_type(gt) for gt in types}
+    allowed = sorted({s for scope in scopes.values() for s in scope})
+    if spec == "all":
+        return allowed
+    seasons = [x.strip() for x in spec.split(",") if x.strip()]
+    if not seasons:
+        raise ValueError("no seasons given")
+    bad = [x for x in seasons if x not in allowed]
+    if bad:
+        raise ValueError(f"unknown seasons {bad} for types {types}; allowed {allowed}")
+    return seasons
+
+
 def _game_ids(client: NhlClient, seasons: Iterable[str], types: Iterable[int]) -> list[int]:
     """All game ids for the given seasons/types, excluding never-played games.
+
+    A (season, type) pair outside that type's scope (config.seasons_for_type)
+    is skipped, so `--seasons all --types 2,3` lists playoffs from 2009-10 but
+    regular seasons only from 2015-16. O(G log G) over G listed games.
 
     Playoff brackets pre-allocate up to 7 game ids per series; games beyond
     the series' actual length appear in this listing with gameStateId ==
@@ -116,6 +224,8 @@ def _game_ids(client: NhlClient, seasons: Iterable[str], types: Iterable[int]) -
     ids: set[int] = set()
     for season in seasons:
         for gt in types:
+            if season not in config.seasons_for_type(gt):
+                continue
             for row in need(client.games_for_season(season, gt), "data"):
                 state = row.get("gameStateId")
                 if state == config.GAME_STATE_NOT_PLAYED:
@@ -134,11 +244,7 @@ def cmd_ingest(client: NhlClient, conn: sqlite3.Connection, seasons: list[str], 
             header = parse_header(pbp)
             roster = parse_roster(pbp)
             segs = build_segments(header, parse_events(pbp, header))
-            has_shifts = 1
-            try:
-                scenarios.parse_shifts(client.shifts(gid))
-            except (FetchError, SchemaError, ParseError):
-                has_shifts = 0
+            has_shifts = _has_shifts(client, gid)
             with conn:
                 conn.execute("INSERT OR REPLACE INTO games VALUES (?,?,?,?,?,?,?,?,?)",
                              (header.game_id, ratings.season_of(gid), header.game_type, header.date,
@@ -161,6 +267,22 @@ def cmd_ingest(client: NhlClient, conn: sqlite3.Connection, seasons: list[str], 
             print(f"  {n}/{len(game_ids)} games, {len(failures)} failures")
     _report_failures(failures, "ingest")
     return 0 if not failures else 2
+
+
+def _has_shifts(client: Any, game_id: int) -> int:
+    """1 if the game's shift chart yields at least one real shift, else 0.
+
+    An empty chart (2009-10 answers data [] / total 0), a goal-rows-only chart,
+    an unfetchable chart or a malformed one all mean "no on-ice units": the
+    game is still ingested for ratings/base rates but never enters the mined
+    pool (scenarios.playable). The reason is printed, never swallowed. O(S).
+    """
+    try:
+        shifts = scenarios.parse_shifts(client.shifts(game_id))
+    except (FetchError, SchemaError, ParseError, ValueError) as exc:
+        print(f"  game {game_id}: shift chart unusable ({type(exc).__name__}: {exc}); has_shifts=0")
+        return 0
+    return 1 if shifts else 0
 
 
 def _segments(conn: sqlite3.Connection, season: str | None) -> list[dict[str, Any]]:
@@ -217,14 +339,21 @@ def cmd_curate(client: NhlClient, conn: sqlite3.Connection) -> int:
 
 def cmd_schedule(conn: sqlite3.Connection, start: date) -> int:
     curated = [sid for (sid,) in conn.execute("SELECT scenario_id FROM scenarios WHERE kind='curated' ORDER BY scenario_id")]
-    segs = [json.loads(r[0]) for r in conn.execute(
-        "SELECT payload_json FROM pp_segments s JOIN games g USING(game_id) WHERE g.has_shifts = 1")]
+    # Every segment carries its game's has_shifts flag so scenarios.playable()
+    # is the single rule that keeps shift-less games out of the pool.
+    segs = [{**json.loads(payload), "has_shifts": bool(has_shifts)} for payload, has_shifts in conn.execute(
+        "SELECT s.payload_json, g.has_shifts FROM pp_segments s JOIN games g USING(game_id)")]
     mined = scenarios.mine(segs)
     with conn:
+        # Rebuild the mined pool from scratch: otherwise scenarios mined by an
+        # earlier run under looser rules (e.g. zero-length PPs) would linger in
+        # the scenarios table and leak into endless_index.json.
+        conn.execute("DELETE FROM scenarios WHERE kind = 'mined'")
         for s in mined:
             sid = scenarios.segment_id(s)
+            payload = {k: v for k, v in s.items() if k != "has_shifts"}  # keep the exported shape unchanged
             conn.execute("INSERT OR IGNORE INTO scenarios VALUES (?,?,?,?)",
-                         (sid, "mined", scenarios.drama_score(s), json.dumps(s)))
+                         (sid, "mined", scenarios.drama_score(s), json.dumps(payload)))
         conn.execute("DELETE FROM daily_schedule")
         conn.executemany("INSERT INTO daily_schedule VALUES (?,?)",
                          [(d["date"], d["scenario_id"]) for d in
@@ -277,14 +406,19 @@ def main(argv: list[str] | None = None) -> int:
     client = NhlClient(offline=a.offline)
     if a.cmd == "probe":
         return cmd_probe(client, a.game_id, a.date)
+    seasons: list[str] = []
+    types: list[int] = []
+    if a.cmd in ("ingest", "all"):
+        # Validate the scope before connect() creates or touches the DB.
+        try:
+            types = [int(t) for t in a.types.split(",")]
+            seasons = resolve_seasons(a.seasons, types)
+        except ValueError as exc:
+            ap.error(str(exc))
     conn = connect()
     try:
         if a.cmd in ("ingest", "all"):
-            seasons = list(config.SEASONS) if a.seasons == "all" else a.seasons.split(",")
-            bad = [x for x in seasons if x not in config.SEASONS]
-            if bad:
-                ap.error(f"unknown seasons {bad}; allowed {config.SEASONS}")
-            rc = cmd_ingest(client, conn, seasons, [int(t) for t in a.types.split(",")])
+            rc = cmd_ingest(client, conn, seasons, types)
             if a.cmd == "ingest":
                 return rc
             # rc 2 = some games failed (logged); later stages still run on what succeeded.

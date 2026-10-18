@@ -221,12 +221,12 @@ class TestCuration(unittest.TestCase):
                     mmss_to_seconds(m[key])
 
     def test_mining_and_schedule(self):
-        segs = [{"game_id": 1, "game_type": 3, "period": 4, "start_t": 10, "pp_score": 2, "pk_score": 2,
-                 "pp_remaining_s": 120, "outcome": "goal"},
-                {"game_id": 2, "game_type": 2, "period": 1, "start_t": 10, "pp_score": 0, "pk_score": 4,
-                 "pp_remaining_s": 120, "outcome": "no_goal"},
-                {"game_id": 3, "game_type": 3, "period": 2, "start_t": 10, "pp_score": 0, "pk_score": 0,
-                 "pp_remaining_s": 10, "outcome": "no_goal"}]
+        segs = [{"game_id": 1, "game_type": 3, "period": 4, "start_t": 10, "end_t": 60, "pp_score": 2,
+                 "pk_score": 2, "pp_remaining_s": 120, "outcome": "goal", "has_shifts": True},
+                {"game_id": 2, "game_type": 2, "period": 1, "start_t": 10, "end_t": 60, "pp_score": 0,
+                 "pk_score": 4, "pp_remaining_s": 120, "outcome": "no_goal", "has_shifts": True},
+                {"game_id": 3, "game_type": 3, "period": 2, "start_t": 10, "end_t": 20, "pp_score": 0,
+                 "pk_score": 0, "pp_remaining_s": 10, "outcome": "no_goal", "has_shifts": True}]
         mined = scenarios.mine(segs)
         self.assertEqual([s["game_id"] for s in mined], [1, 2])     # 10 s PP excluded
         from datetime import date
@@ -659,15 +659,18 @@ class _ProbeFakeClient:
         self.pbp_calls.append(game_id)
         if game_id in self.fail_ids:
             raise FetchError(f"simulated fetch failure for {game_id}")
-        return self.pbps[game_id]
+        # Era games (config.PROBE_ERA_GAMES) default to a well-formed synthetic pbp
+        # so the older tests only have to name the games they are about.
+        return self.pbps[game_id] if game_id in self.pbps else _probe_pbp(game_id)
 
     def shifts(self, game_id):
         return {"data": [{"playerId": 101, "teamId": HOME, "period": 1, "startTime": "00:00",
                           "endTime": "01:00"}]}
 
     def score_by_date(self, on_date):
-        gid = next(iter(self.pbps))
-        return {"games": [{"id": gid, "homeTeam": {"abbrev": "HOM"}, "awayTeam": {"abbrev": "AWY"}}]}
+        ids = list(self.pbps) + [gid for gid, _ in config.PROBE_ERA_GAMES if gid not in self.pbps]
+        return {"games": [{"id": gid, "homeTeam": {"abbrev": "HOM"}, "awayTeam": {"abbrev": "AWY"}}
+                          for gid in ids]}
 
     def games_for_season(self, season, game_type):
         return {"data": [{"id": 1, "gameStateId": 7}]}

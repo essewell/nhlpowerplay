@@ -18,7 +18,7 @@ from typing import Any
 from . import config
 from .nhl_client import NhlClient, need
 from .parse import GameHeader, mmss_to_seconds, parse_events, parse_header, parse_roster
-from .segments import OUTCOME_GOAL, PpSegment, build_segments
+from .segments import OUTCOME_CARRIED, OUTCOME_GOAL, PpSegment, build_segments
 
 
 class CurationMismatch(RuntimeError):
@@ -156,12 +156,32 @@ def drama_score(seg: dict[str, Any]) -> float:
 
 
 def playable(seg: dict[str, Any]) -> bool:
+    """True if a mined segment may enter the Daily/Endless pool. O(1).
+
+    Excluded (fail closed on a missing field):
+      - games without shift charts (`has_shifts` falsy or absent): no real
+        on-ice units, and lineups are never invented. Those games still feed
+        ratings and base rates; only the pool skips them.
+      - zero-length segments (end_t <= start_t): a 0-second power play.
+      - segments opening at or after the period's end (start_t >=
+        PERIOD_LENGTH_S): period-end openers with nothing left to play.
+      - too little PP time left, or a carried-over tail.
+    """
+    if not seg.get("has_shifts"):
+        return False
+    start_t, end_t = seg.get("start_t"), seg.get("end_t")
+    if start_t is None or end_t is None or end_t <= start_t or start_t >= config.PERIOD_LENGTH_S:
+        return False
     rem = seg.get("pp_remaining_s")
-    return rem is not None and rem >= config.MIN_PP_REMAINING_FOR_POOL_S and seg["outcome"] != "carried_over"
+    return rem is not None and rem >= config.MIN_PP_REMAINING_FOR_POOL_S and seg["outcome"] != OUTCOME_CARRIED
 
 
 def mine(segments: list[dict[str, Any]], limit: int = config.DAILY_POOL_SIZE) -> list[dict[str, Any]]:
-    """Top playable segments by drama, deterministic tie-break. O(N log N)."""
+    """Top playable segments by drama, deterministic tie-break. O(N log N).
+
+    Each segment dict must carry its game's `has_shifts` flag (build.cmd_schedule
+    copies it from the games table); segments without it are not playable.
+    """
     pool = [s for s in segments if playable(s)]
     pool.sort(key=lambda s: (-drama_score(s), s["game_id"], s["start_t"]))
     return pool[:limit]

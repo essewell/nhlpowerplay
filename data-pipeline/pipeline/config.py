@@ -9,13 +9,36 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Scope
 # ---------------------------------------------------------------------------
-FIRST_SEASON_START_YEAR = 2015          # 2015-16 season
+FIRST_SEASON_START_YEAR = 2015          # 2015-16 season (regular-season scope)
 LAST_SEASON_START_YEAR = 2025           # 2025-26 season (playoffs ended June 2026)
-SEASONS: tuple[str, ...] = tuple(
-    f"{y}{y + 1}" for y in range(FIRST_SEASON_START_YEAR, LAST_SEASON_START_YEAR + 1)
-)
+# Playoff scope reaches further back than the regular season. Source: Emmett,
+# DECISION 2026-10-18 in docs/DATA_STATUS.md ("playoffs only, extended back to
+# 2009-10"). 2009-10 is the first season with full PBP (situationCode + coords);
+# its shift charts are empty, so those games feed ratings/base rates only.
+PLAYOFF_FIRST_SEASON_START_YEAR = 2009  # 2009-10 season
+
+
+def _season_range(first_start_year: int, last_start_year: int) -> tuple[str, ...]:
+    return tuple(f"{y}{y + 1}" for y in range(first_start_year, last_start_year + 1))
+
+
+SEASONS: tuple[str, ...] = _season_range(FIRST_SEASON_START_YEAR, LAST_SEASON_START_YEAR)  # regular season
+PLAYOFF_SEASONS: tuple[str, ...] = _season_range(PLAYOFF_FIRST_SEASON_START_YEAR, LAST_SEASON_START_YEAR)
+ALL_SEASONS: tuple[str, ...] = tuple(sorted(set(SEASONS) | set(PLAYOFF_SEASONS)))
 GAME_TYPE_REGULAR = 2                   # per Zmalski NHL-API-Reference ("2 regular, 3 postseason")
 GAME_TYPE_PLAYOFF = 3
+
+
+def seasons_for_type(game_type: int) -> tuple[str, ...]:
+    """Season scope for one game type: playoffs go back further than the regular season.
+
+    Raises ValueError for an unknown game type. O(1).
+    """
+    if game_type == GAME_TYPE_PLAYOFF:
+        return PLAYOFF_SEASONS
+    if game_type == GAME_TYPE_REGULAR:
+        return SEASONS
+    raise ValueError(f"unknown game type {game_type}; expected {GAME_TYPE_REGULAR} or {GAME_TYPE_PLAYOFF}")
 
 # ---------------------------------------------------------------------------
 # Endpoints (community-documented, undocumented by the NHL; see README)
@@ -94,6 +117,17 @@ GAME_STATE_FINAL = 7
 # was passed, so the legacy-PBP code paths get exercised on every probe run.
 PROBE_LEGACY_GAME_ID = 2015030111
 PROBE_LEGACY_GAME_DATE = "2016-04-14"
+
+# Early-era playoff games (one per season at the start of the playoff scope)
+# that cmd_probe also re-checks and reports coverage for: shift-chart rows,
+# situationCode, coordinates, homeTeamDefendingSide. Missing shifts here are
+# reported, not failed: 2009-10 shift charts are known to be empty and those
+# games are kept out of the mined pool via games.has_shifts.
+# Ids/dates confirmed against the live API on 2026-10-18 (score-by-date lists them).
+PROBE_ERA_GAMES: tuple[tuple[int, str], ...] = (
+    (2009030416, "2010-06-09"),         # 2009-10 playoffs
+    (2010030417, "2011-06-15"),         # 2010-11 playoffs
+)
 
 # ---------------------------------------------------------------------------
 # Shrinkage priors (empirical Bayes, Gamma-Poisson on rate multipliers).
