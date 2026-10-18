@@ -175,5 +175,10 @@ def daily_schedule(curated_ids: list[str], mined_ids: list[str], start: date) ->
 
 
 def segment_id(seg: dict[str, Any]) -> str:
-    return f"{seg['game_id']}-p{seg['period']}-{seg['start_t']:04d}"
+    """'<game_id>-p<period>-<start_t>', with a '-d<n>' suffix for the rare case
+    of two distinct, non-zero-length segments starting at the same (period,
+    start_t) in one game (see segments.build_segments's seq field)."""
+    base = f"{seg['game_id']}-p{seg['period']}-{seg['start_t']:04d}"
+    seq = seg.get("seq", 0)
+    return base if not seq else f"{base}-d{seq}"
 

@@ -72,6 +72,30 @@ UNBLOCKED_SHOT_EVENTS = frozenset({EV_GOAL, EV_SHOT, EV_MISS})
 ALL_SHOT_EVENTS = UNBLOCKED_SHOT_EVENTS | {EV_BLOCK}
 
 # ---------------------------------------------------------------------------
+# homeTeamDefendingSide inference (missing on most plays before 2019-20).
+# ---------------------------------------------------------------------------
+# A period's zoneCode + xCoord pairs vote on which way the home team attacks;
+# real play never swaps ends mid-period, so a clean period should show near-
+# unanimous agreement. Below this bar we leave the side unresolved rather
+# than guess. ASSUMPTION — tune against more old-season probes.
+SIDE_INFERENCE_MIN_SAMPLES = 3
+SIDE_INFERENCE_MIN_AGREEMENT = 0.9
+
+# ---------------------------------------------------------------------------
+# NHL stats-API gameStateId (community-documented, undocumented by the NHL).
+# ASSUMPTION: inferred from observed data, not a published enum; cmd_probe
+# checks this key path on every run so a live-data mismatch surfaces early.
+# ---------------------------------------------------------------------------
+GAME_STATE_NOT_PLAYED = 1
+GAME_STATE_FINAL = 7
+
+# A known pre-2019-20 game (missing homeTeamDefendingSide on nearly every
+# play) that cmd_probe always re-checks in addition to whatever --game-id
+# was passed, so the legacy-PBP code paths get exercised on every probe run.
+PROBE_LEGACY_GAME_ID = 2015030111
+PROBE_LEGACY_GAME_DATE = "2016-04-14"
+
+# ---------------------------------------------------------------------------
 # Shrinkage priors (empirical Bayes, Gamma-Poisson on rate multipliers).
 # multiplier = (observed + m) / (expected + m)
 # ---------------------------------------------------------------------------

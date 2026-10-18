@@ -89,6 +89,56 @@ def normalize_xy(x: float, y: float, team_is_home: bool, home_defending_side: st
     return (x, y) if attacks_positive else (-x, -y)
 
 
+def _owner_team_id(play: dict[str, Any], header: GameHeader) -> int | None:
+    """Team credited with the action, with the blocked-shot swap applied. O(1)."""
+    owner = (play.get("details") or {}).get("eventOwnerTeamId")
+    if owner is None:
+        return None
+    team_id = int(owner)
+    if play.get("typeDescKey") == config.EV_BLOCK:
+        # eventOwnerTeamId on blocked shots is the blocking team (hockeyR swaps it).
+        team_id = header.away_id if team_id == header.home_id else header.home_id
+    return team_id
+
+
+def _infer_defending_sides(plays: list[dict[str, Any]], header: GameHeader) -> dict[int, str]:
+    """Infer each period's homeTeamDefendingSide from zoneCode + xCoord votes.
+
+    Sides are fixed for an entire period in real play, so any period with
+    enough offensive/defensive-zone events should show near-unanimous
+    agreement on which way the home team attacks. A period that falls short
+    of SIDE_INFERENCE_MIN_SAMPLES votes or SIDE_INFERENCE_MIN_AGREEMENT
+    consensus is left out of the returned dict (unresolved), never guessed.
+
+    O(P) over P plays: one pass to tally votes, then O(periods) to decide.
+    """
+    votes: dict[int, dict[str, int]] = {}
+    for play in plays:
+        period = play.get("periodDescriptor", {}).get("number")
+        d = play.get("details") or {}
+        zone, x = d.get("zoneCode"), d.get("xCoord")
+        if period is None or zone not in ("O", "D") or x is None or x == 0:
+            continue
+        team_id = _owner_team_id(play, header)
+        if team_id is None:
+            continue
+        team_is_home = team_id == header.home_id
+        team_attacks_positive = (x > 0) if zone == "O" else (x < 0)
+        home_attacks_positive = team_attacks_positive if team_is_home else not team_attacks_positive
+        side = "left" if home_attacks_positive else "right"
+        votes.setdefault(period, {"left": 0, "right": 0})[side] += 1
+
+    resolved: dict[int, str] = {}
+    for period, tally in votes.items():
+        total = tally["left"] + tally["right"]
+        if total < config.SIDE_INFERENCE_MIN_SAMPLES:
+            continue
+        winner, count = max(tally.items(), key=lambda kv: kv[1])
+        if count / total >= config.SIDE_INFERENCE_MIN_AGREEMENT:
+            resolved[period] = winner
+    return resolved
+
+
 def shot_distance_ft(x: float, y: float) -> float:
     """Distance to the attacked net at (+NET_X_FT, 0) in normalized coords."""
     return math.hypot(config.NET_X_FT - x, y)
@@ -124,6 +174,7 @@ class Event:
     home_score: int | None = None
     away_score: int | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    side_unresolved: bool = False  # True if xCoord/yCoord existed but no defending side could be found
 
     @property
     def distance(self) -> float | None:
@@ -174,30 +225,39 @@ def parse_events(pbp: dict[str, Any], header: GameHeader) -> list[Event]:
     """Convert raw plays into Events in API order. O(P) for P plays.
 
     Plays without situationCode keep situation=None (e.g. some period markers).
-    Raises SchemaError / ParseError on malformed required fields.
+    homeTeamDefendingSide missing on a play (common before 2019-20) falls back
+    to a side inferred per period from the rest of the game (see
+    _infer_defending_sides); if that is also unresolved, x/y stay None and
+    Event.side_unresolved is set rather than raising. Raises SchemaError /
+    ParseError on malformed required fields.
     """
+    plays = need(pbp, "plays")
+    side_by_period = _infer_defending_sides(plays, header)
     events: list[Event] = []
-    for i, play in enumerate(need(pbp, "plays")):
+    for i, play in enumerate(plays):
         try:
-            events.append(_parse_play(play, header))
+            events.append(_parse_play(play, header, side_by_period))
         except (SchemaError, ParseError) as exc:
             raise type(exc)(f"game {header.game_id} play[{i}]: {exc}") from exc
     return events
 
 
-def _parse_play(play: dict[str, Any], header: GameHeader) -> Event:
+def _parse_play(play: dict[str, Any], header: GameHeader, side_by_period: dict[int, str]) -> Event:
     kind = str(need(play, "typeDescKey"))
     period = int(need(play, "periodDescriptor.number"))
     t = mmss_to_seconds(str(need(play, "timeInPeriod")))
     code = opt(play, "situationCode")
-    situation = parse_situation(str(code)) if code is not None else None
+    # Shootout situationCodes ('1010'/'0101'/...) encode shooter/goalie
+    # presence, not skater counts, so a team's skater digit is '0' -- real
+    # strength play never has 0 skaters. This also catches the OT
+    # period-end marker that carries a shootout-shaped code one event
+    # before periodDescriptor.periodType actually flips to SO, so the
+    # digit shape is checked directly rather than trusting periodType alone.
+    is_shootout_shaped = isinstance(code, str) and len(code) == 4 and code.isdigit() and "0" in code[1:3]
+    situation = parse_situation(str(code)) if code is not None and not is_shootout_shaped else None
     d = opt(play, "details", {}) or {}
 
-    owner = d.get("eventOwnerTeamId")
-    team_id: int | None = int(owner) if owner is not None else None
-    if kind == config.EV_BLOCK and team_id is not None:
-        # eventOwnerTeamId on blocked shots is the blocking team (hockeyR swaps it).
-        team_id = header.away_id if team_id == header.home_id else header.home_id
+    team_id = _owner_team_id(play, header)
     team_is_home = None if team_id is None else team_id == header.home_id
 
     ev = Event(
@@ -218,8 +278,13 @@ def _parse_play(play: dict[str, Any], header: GameHeader) -> Event:
         ev.player3 = d.get("assist2PlayerId")
         ev.goalie = d.get("goalieInNetId")
         if "xCoord" in d and "yCoord" in d and team_is_home is not None:
-            ev.x, ev.y = normalize_xy(float(d["xCoord"]), float(d["yCoord"]), team_is_home,
-                                      opt(play, "homeTeamDefendingSide"))
+            side = opt(play, "homeTeamDefendingSide")
+            if side not in ("left", "right"):
+                side = side_by_period.get(period)
+            if side in ("left", "right"):
+                ev.x, ev.y = normalize_xy(float(d["xCoord"]), float(d["yCoord"]), team_is_home, side)
+            else:
+                ev.side_unresolved = True
     elif kind == config.EV_FACEOFF:
         ev.player1, ev.player2 = d.get("winningPlayerId"), d.get("losingPlayerId")
         ev.extra["zone"] = d.get("zoneCode")

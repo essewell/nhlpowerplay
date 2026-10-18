@@ -44,7 +44,7 @@ PROBE_PATHS = {
     "shifts": ["data[0].playerId", "data[0].teamId", "data[0].period", "data[0].startTime",
                "data[0].endTime"],
     "score": ["games[0].id", "games[0].homeTeam.abbrev", "games[0].awayTeam.abbrev"],
-    "games": ["data[0].id"],
+    "games": ["data[0].id", "data[0].gameStateId"],
 }
 
 
@@ -77,8 +77,26 @@ def cmd_probe(client: NhlClient, game_id: int, on_date: str) -> int:
         events = parse_events(responses["pbp"], header)
         segs = build_segments(header, events)
         print(f"parsed {len(events)} events, {len(segs)} PP segments in game {game_id}")
+        unresolved = sum(1 for e in events if e.side_unresolved)
+        if unresolved:
+            print(f"  {unresolved} event(s) had no resolvable homeTeamDefendingSide; x/y left null")
     except (SchemaError, ParseError) as exc:
         missing.append(f"parse: {exc}")
+
+    # Always also probe a known old-era game (pre-2019-20 PBP mostly lacks
+    # homeTeamDefendingSide and this run's --game-id may not), so the legacy
+    # code paths get exercised on every probe run, not only when asked for.
+    if game_id != config.PROBE_LEGACY_GAME_ID:
+        try:
+            legacy_pbp = client.pbp(config.PROBE_LEGACY_GAME_ID)
+            legacy_header = parse_header(legacy_pbp)
+            legacy_events = parse_events(legacy_pbp, legacy_header)
+            legacy_segs = build_segments(legacy_header, legacy_events)
+            print(f"parsed {len(legacy_events)} events, {len(legacy_segs)} PP segments "
+                  f"in legacy game {config.PROBE_LEGACY_GAME_ID}")
+        except (FetchError, SchemaError, ParseError) as exc:
+            missing.append(f"legacy-game {config.PROBE_LEGACY_GAME_ID}: {exc}")
+
     if missing:
         print("PROBE FAILED:\n  " + "\n  ".join(missing), file=sys.stderr)
         return 1
@@ -87,10 +105,21 @@ def cmd_probe(client: NhlClient, game_id: int, on_date: str) -> int:
 
 
 def _game_ids(client: NhlClient, seasons: Iterable[str], types: Iterable[int]) -> list[int]:
+    """All game ids for the given seasons/types, excluding never-played games.
+
+    Playoff brackets pre-allocate up to 7 game ids per series; games beyond
+    the series' actual length appear in this listing with gameStateId ==
+    GAME_STATE_NOT_PLAYED. That mapping is an inference from observed data,
+    not a published enum, so a missing gameStateId is treated as "can't
+    tell" and kept rather than silently dropped.
+    """
     ids: set[int] = set()
     for season in seasons:
         for gt in types:
             for row in need(client.games_for_season(season, gt), "data"):
+                state = row.get("gameStateId")
+                if state == config.GAME_STATE_NOT_PLAYED:
+                    continue
                 ids.add(int(need(row, "id")))
     return sorted(ids)
 
@@ -125,8 +154,9 @@ def cmd_ingest(client: NhlClient, conn: sqlite3.Connection, seasons: list[str], 
                          s.end_t, s.strength, s.pp_score, s.pk_score, s.pp_remaining_s, s.outcome,
                          s.scorer_id, s.assist1_id, s.assist2_id, s.goalie_id,
                          scenarios.drama_score(d), json.dumps(d)))
-        except (FetchError, SchemaError, ParseError, ValueError) as exc:
-            failures.append(f"{gid}: {exc}")
+        except Exception as exc:  # noqa: BLE001 - one bad game must not abort an 11-season run;
+            # always recorded with type+message below, never swallowed silently.
+            failures.append(f"{gid}: {type(exc).__name__}: {exc}")
         if n % 250 == 0:
             print(f"  {n}/{len(game_ids)} games, {len(failures)} failures")
     _report_failures(failures, "ingest")

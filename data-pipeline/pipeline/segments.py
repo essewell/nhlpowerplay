@@ -49,6 +49,7 @@ class PpSegment:
     goalie_id: int | None = None
     shots: list[dict[str, Any]] = field(default_factory=list)
     faceoffs: list[dict[str, Any]] = field(default_factory=list)
+    seq: int = 0  # disambiguates segments that share (game_id, period, start_t); see segment_id()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -63,13 +64,44 @@ def build_segments(header: GameHeader, events: list[Event]) -> list[PpSegment]:
     current: PpSegment | None = None
     home_score = away_score = 0
     last_penalty_by_team: dict[int, Event] = {}
+    # (period, start_t) -> (index into segments, is a flicker). Lets a real
+    # segment supersede a flicker that already claimed its slot, in either
+    # arrival order, without ever holding two segments at the same key.
+    slot_by_key: dict[tuple[int, int], tuple[int, bool]] = {}
+    seq_by_key: dict[tuple[int, int], int] = {}  # next disambiguating seq per key, for real collisions
+
+    def append(seg: PpSegment) -> None:
+        # A zero-length no-result segment is a momentary situationCode flicker
+        # (e.g. two coincidental penalties logged at the same instant), not a
+        # real power play. It only gets dropped if something else already
+        # occupies its (period, start_t) slot -- a *lone* zero-length segment
+        # (e.g. one truncated by the recorded data simply ending) is kept, since
+        # it carries real state and nothing collides with its id. A goal or
+        # shorthanded-goal outcome is never treated as a flicker: a goal happened.
+        is_flicker = seg.start_t == seg.end_t and seg.outcome in (OUTCOME_NO_GOAL, OUTCOME_CARRIED)
+        key = (seg.period, seg.start_t)
+        slot = slot_by_key.get(key)
+        if slot is not None:
+            prior_idx, prior_is_flicker = slot
+            if is_flicker:
+                return  # a flicker never displaces whatever already holds this slot
+            if prior_is_flicker:
+                segments[prior_idx] = seg  # real segment supersedes the flicker that shared this id
+                slot_by_key[key] = (prior_idx, False)
+                return
+            seg.seq = seq_by_key.get(key, 0) + 1  # two distinct real segments share an id: disambiguate
+            seq_by_key[key] = seg.seq
+            segments.append(seg)
+            return
+        slot_by_key[key] = (len(segments), is_flicker)
+        segments.append(seg)
 
     def close(outcome: str, ev: Event) -> None:
         nonlocal current
         assert current is not None
         current.outcome = outcome
         current.end_t = ev.t if ev.period == current.period else config.PERIOD_LENGTH_S
-        segments.append(current)
+        append(current)
         current = None
 
     for ev in events:
@@ -131,7 +163,7 @@ def build_segments(header: GameHeader, events: list[Event]) -> list[PpSegment]:
 
     if current is not None:
         current.outcome = OUTCOME_NO_GOAL
-        segments.append(current)
+        append(current)
     return segments
 
 
