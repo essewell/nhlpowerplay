@@ -23,6 +23,18 @@
   --color-grade-close: #E8C547;
   --color-grade-costly: #E07A2E;
   --color-grade-miss: #8E1F35;
+  --color-text-soft: #D5DEE9;
+  --color-border-strong: #3A4A66;
+  --color-surface-raised: #1E2A40;
+  --color-accent-sunk: #2A1C10;
+  --color-on-accent-sunk: #FFD9B8;
+  --color-pk-team: #8593A6;
+  --color-on-grade-close: #1A1404;
+  --color-skeleton: #1A2438;
+  --color-accent-on-light: #C2560E;
+
+  /* DESIGN.md: tooltips only */
+  --shadow-pop: 0 12px 28px rgba(0, 0, 0, 0.45);
 
   /* DESIGN.md: radii 10 / 12 / 14 / 16 / 22 */
   --radius-sm: 10px;
