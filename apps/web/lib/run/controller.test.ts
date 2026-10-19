@@ -140,7 +140,7 @@ test("controller edge: the host itself ignores a repeated callIndex", async () =
   const source = fixtureSource();
   const out: FromHost[] = [];
   const runner = new HostRunner(() => source, (m) => out.push(m));
-  runner.receive({ type: "init", init: { mode: "daily", date: "2099-01-01", scenarioId: SCENARIO_A, seed: null, calls: [], dataBase: TEST_BASE } });
+  runner.receive({ type: "init", init: { mode: "daily", date: "2099-01-01", scenarioId: SCENARIO_A, seed: null, formation: "umbrella", calls: [], dataBase: TEST_BASE } });
   await new Promise((r) => setTimeout(r, 50));
   runner.receive({ type: "start" });
   await new Promise((r) => setTimeout(r, 20));

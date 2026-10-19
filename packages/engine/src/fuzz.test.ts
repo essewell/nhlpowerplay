@@ -14,7 +14,7 @@ import { pkPositions, spotPos } from "./formation.ts";
 import { fnv1a, mulberry32, prngNext } from "./modes.ts";
 import type { Result } from "./result.ts";
 import { ALL_FIXTURES, fiveOnFour, type FixtureOpts } from "./sim-fixtures.ts";
-import type { Call, CallOption, EndReason, RunInput, RunState } from "./sim-types.ts";
+import type { Call, CallOption, EndReason, PpFormationName, RunInput, RunState } from "./sim-types.ts";
 import { applyCall, initRun, legalCalls, replay } from "./sim.ts";
 
 const FUZZ_RUNS = 10_000;
@@ -27,6 +27,10 @@ const CALIBRATION_DRAWS = 20_000;
 const CALIBRATION_SIGMAS = 4;
 const CALIBRATION_SEED = 0xc0ffee;
 const END_REASONS: readonly EndReason[] = ["pp_expired", "sh_goal", "cleared_out", "game_end"];
+
+const FORMATIONS: readonly PpFormationName[] = ["umbrella", "one_three_one", "overload", "spread"];
+/** Chance the policy swaps the formation on an entry or faceoff call (any valid formation is legal). */
+const FORMATION_SWAP_P = 0.4;
 
 const FIXTURE_NAMES = Object.keys(ALL_FIXTURES).sort();
 
@@ -56,7 +60,7 @@ function specFor(i: number): RunSpec {
   const opts: FixtureOpts = {
     seed: fnv1a(`fuzz-${i}`),
     askEveryTouch: (i >> 3) % 2 === 1,
-    formation: i % 2 === 0 ? "umbrella" : "one_three_one",
+    formation: FORMATIONS[i % FORMATIONS.length],
   };
   return { index: i, fixture, input: build(opts) };
 }
@@ -105,6 +109,9 @@ function checkState(s: RunState, prev: RunState | null, input: RunInput, callsAp
     const st = must(strengthOf(s.penalties, s.goaliePulled, s.clock.period, input.gameType), "strengthOf");
     check(s.ppSpots.length === st.pp, `${s.ppSpots.length} PP skaters on ice, strength says ${st.pp}`);
     check(s.pkPos.length === st.pk, `${s.pkPos.length} PK positions, strength says ${st.pk}`);
+    check(new Set(s.ppSpots.map((x) => x.spot)).size === s.ppSpots.length, "two PP skaters share a spot");
+    check(FORMATIONS.includes(s.formation) && (s.formationSide === "left" || s.formationSide === "right"),
+      `bad formation state ${s.formation}/${s.formationSide}`);
   }
   let lastAt = prev === null ? -1 : (prev.log.at(-1)?.atS ?? -1);
   const from = prev === null ? 0 : prev.log.length;
@@ -135,8 +142,15 @@ function fuzzRun(spec: RunSpec): RunResult {
     checkOptions(opts);
     const chosen = opts[Math.floor(pick() * opts.length)];
     check(chosen !== undefined, "policy picked out of range");
-    const next = must(applyCall(s, input, chosen.call, s.callCount), `applyCall ${JSON.stringify(chosen.call)}`);
-    calls.push(chosen.call);
+    // Entry options already span all 9 method x lane pairs; sometimes swap the formation too.
+    let call = chosen.call;
+    if ((call.type === "zone_entry" || call.type === "faceoff") && pick() < FORMATION_SWAP_P) {
+      const f = FORMATIONS[Math.floor(pick() * FORMATIONS.length)];
+      check(f !== undefined, "formation pick out of range");
+      call = { ...call, formation: f };
+    }
+    const next = must(applyCall(s, input, call, s.callCount), `applyCall ${JSON.stringify(call)}`);
+    calls.push(call);
     const callEvent = next.log[s.log.length];
     check(callEvent !== undefined && callEvent.kind === "call" && callEvent.p === chosen.p,
       "logged call probability differs from the option shown");

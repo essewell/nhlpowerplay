@@ -39,6 +39,8 @@ export interface Strength { pp: number; pk: number }
 export type FaceoffDot = "oz_left" | "oz_right" | "centre";
 export type FaceoffTarget = "point" | "half_wall" | "back";
 export type EntryMethod = "carry" | "dump" | "drop";
+/** Which lane the entry attacks, from the attacking team's view (y > 0 is left). */
+export type EntryLane = "left" | "middle" | "right";
 export type BreakoutMethod = "carry" | "pass" | "rim";
 
 export type Carrier = { kind: "pp"; id: number } | { kind: "pk" } | { kind: "loose" };
@@ -52,7 +54,8 @@ export type Phase =
   | { kind: "breakout" }                 // only reached when settings.askEveryTouch
   | { kind: "ended"; reason: EndReason; detail: EndDetail };
 
-export type PpFormationName = "umbrella" | "one_three_one";
+/** Player-chosen PP setups. "overload" stacks the side of the puck (mirrors left/right with the play). */
+export type PpFormationName = "umbrella" | "one_three_one" | "overload" | "spread";
 
 export interface PpSkater extends Skater {
   /** Shrunk faceoff win rate from ratings (pipeline FACEOFF_PRIOR_RATE when unknown). */
@@ -88,8 +91,11 @@ export type Call =
   | { type: "skate"; to: SpotName }
   | { type: "shoot"; option: ShotOption; corner: Corner }
   | { type: "set_play"; id: SetPlayId }
-  | { type: "faceoff"; takerId: number; target: FaceoffTarget }
-  | { type: "zone_entry"; method: EntryMethod }
+  /** `formation` applies if the PP wins an offensive-zone draw; omitted = keep the current one. */
+  | { type: "faceoff"; takerId: number; target: FaceoffTarget; formation?: PpFormationName }
+  /** `lane` decides where the entry lands; `formation` is the setup after a clean entry.
+   *  Both optional for replay of older calls (default: middle / current formation). */
+  | { type: "zone_entry"; method: EntryMethod; lane?: EntryLane; formation?: PpFormationName }
   | { type: "breakout"; method: BreakoutMethod };
 
 /** One resolved step, for animation, review and debugging. `p`/`u` are logged for every draw. */
@@ -124,6 +130,10 @@ export interface RunState {
   pkPos: Vec2[];
   /** True right after a PP goal; the machine shows a celebration, then a centre faceoff. */
   justScored: boolean;
+  /** Current PP setup (starts as settings.formation; changed by entry / OZ faceoff calls). */
+  formation: PpFormationName;
+  /** Strong side for "overload"; ignored by the other formations. */
+  formationSide: "left" | "right";
   log: RunEvent[];
 }
 

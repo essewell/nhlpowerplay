@@ -19,9 +19,10 @@ import { EstimateTag, InfoTip } from "../ui/Tooltip.tsx";
 import type { RunSnapshot } from "../../lib/contracts.ts";
 import { spotName, t } from "../../lib/copy.ts";
 import {
-  carrierOf, groupOptions, limitRows, optionDisabled, playerLabel, SET_PLAY_VIEW, sortByChance,
+  carrierOf, currentSetup, groupOptions, limitRows, optionDisabled, playerLabel, SET_PLAY_VIEW, sortByChance,
 } from "../../lib/play/options.ts";
 import { scoreboardModel } from "../../lib/play/scoreboard.ts";
+import { formationChipText } from "../../lib/play/formations.ts";
 import { fillCopy, pctLabel } from "../../lib/play/strings.ts";
 import { RinkView, type RinkPassTarget } from "./RinkView.tsx";
 import { Scoreboard } from "./Scoreboard.tsx";
@@ -93,6 +94,8 @@ export function DecisionView({ snapshot, resumed, onCall, ticker }: Props) {
   const skateRows = limitRows(sortByChance(grouped.skate), showAllSpots);
   const hiddenSpots = skateRows.hidden;
   const chipText = t("pause.chip.paused", { number: carrierLabel.number ?? carrierLabel.lastName });
+  const setup = currentSetup(snapshot);
+  const setupText = formationChipText(setup.formation, setup.side);
 
   const noOptions = options.length === 0;
   const cutNote = fillCopy("play.cut");
@@ -109,6 +112,9 @@ export function DecisionView({ snapshot, resumed, onCall, ticker }: Props) {
         {board.ok ? <Scoreboard teams={scenario.teams} model={board.value} /> : null}
         <div className="flex flex-wrap gap-2 text-[13px]">
           <Chip>{chipText}</Chip>
+          <Chip>
+            <span aria-label={fillCopy("formation.chip.aria", { setup: setupText })}>{setupText}</span>
+          </Chip>
           {resumed ? <Chip>{t("pause.resume.banner")}</Chip> : null}
         </div>
         {ticker}

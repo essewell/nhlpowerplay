@@ -18,12 +18,12 @@
  */
 import { EndlessQueue, fnv1a } from "@powerplay/engine/modes.ts";
 import { err, ok, type Result } from "@powerplay/engine/result.ts";
-import type { Call } from "@powerplay/engine/sim-types.ts";
+import type { Call, PpFormationName } from "@powerplay/engine/sim-types.ts";
 import type { Mode } from "../contracts.ts";
 import { pickDaily } from "../daily.ts";
 import type { DataSource } from "../data.ts";
 import {
-  clearRun, readQueue, readRun, writeQueue, writeRun, type QueueState, type StoredRun,
+  clearRun, readFormationPref, readQueue, readRun, storedFormation, writeQueue, writeRun, type QueueState, type StoredRun,
 } from "./persistence.ts";
 import type { KeyValueStore } from "./store.ts";
 
@@ -33,6 +33,8 @@ export interface RunPlan {
   scenarioId: string;
   /** Run seed (RunInput.seed). null only if a caller builds a plan by hand; planRun always sets it. */
   seed: number | null;
+  /** Starting formation (RunInput.settings.formation): the stored run's, else the player's last pick for this mode. */
+  formation: PpFormationName;
   calls: Call[];
   /** The stored run already finished: show its final state, do not offer another attempt. */
   ended: boolean;
@@ -56,7 +58,7 @@ export interface PlanOpts {
 }
 
 function planFromStored(s: StoredRun): RunPlan {
-  return { mode: s.mode, date: s.date, scenarioId: s.scenarioId, seed: s.seed, calls: s.calls, ended: s.ended, resumed: true };
+  return { mode: s.mode, date: s.date, scenarioId: s.scenarioId, seed: s.seed, formation: storedFormation(s), calls: s.calls, ended: s.ended, resumed: true };
 }
 
 /** Stored run, or null. A corrupt value is reported with console.warn, discarded, and treated as absent. */
@@ -72,7 +74,8 @@ function loadStored(store: KeyValueStore, mode: Mode, ignore: boolean): StoredRu
 function persistFresh(store: KeyValueStore, plan: RunPlan): RunPlan {
   if (plan.seed !== null) {
     writeRun(store, {
-      v: 1, mode: plan.mode, date: plan.date, scenarioId: plan.scenarioId, seed: plan.seed, calls: [], ended: false,
+      v: 1, mode: plan.mode, date: plan.date, scenarioId: plan.scenarioId, seed: plan.seed,
+      formation: plan.formation, calls: [], ended: false,
     });
   }
   return plan;
@@ -97,7 +100,8 @@ async function planDaily(requestedId: string | null, deps: PlanDeps, opts: PlanO
   const sc = await deps.source.scenario(scenarioId);
   if (!sc.ok) return sc;
   return ok(persistFresh(deps.store, {
-    mode: "daily", date: today, scenarioId, seed: sc.value.seed, calls: [], ended: false, resumed: false,
+    mode: "daily", date: today, scenarioId, seed: sc.value.seed, formation: readFormationPref(deps.store, "daily"),
+    calls: [], ended: false, resumed: false,
   }));
 }
 
@@ -140,7 +144,8 @@ async function planEndless(requestedId: string | null, deps: PlanDeps, opts: Pla
   const sc = await deps.source.scenario(scenarioId);
   if (!sc.ok) return sc;
   return ok(persistFresh(deps.store, {
-    mode: "endless", date: null, scenarioId, seed, calls: [], ended: false, resumed: false,
+    mode: "endless", date: null, scenarioId, seed, formation: readFormationPref(deps.store, "endless"),
+    calls: [], ended: false, resumed: false,
   }));
 }
 

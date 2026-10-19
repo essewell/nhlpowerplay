@@ -5,17 +5,18 @@
  * same message interface (transport.ts). The actor is never shared or touched from another thread.
  *
  * Message protocol (plain JSON, structured-clone safe):
- *   main -> host: init {RunInit} | start | call {call, callIndex} | continue
+ *   main -> host: init {RunInit} | start | call {call, callIndex} | continue | formation {formation}
  *   host -> main: snapshot {RunSnapshot} after init and after EVERY event (even an ignored duplicate,
  *                 so the caller's `busy` always clears) | fatal {kind, message}
+ * `formation` (intro only, before any call) rebuilds the run with another starting formation: it is part of the replay key.
  * Cost: one legalCalls() per paused snapshot, O(C x (D + R + S)); one applyCall per call.
  */
 import { runMachine } from "@powerplay/engine/machine.ts";
 import { legalCalls, replay } from "@powerplay/engine/sim.ts";
-import type { Call, CallOption, RunInput } from "@powerplay/engine/sim-types.ts";
+import type { Call, CallOption, PpFormationName, RunInput } from "@powerplay/engine/sim-types.ts";
 import { createActor, type Actor } from "xstate";
 import type { Mode, RunSnapshot } from "../contracts.ts";
-import type { DataSource } from "../data.ts";
+import { V1_LOAD_OPTS, type DataSource } from "../data.ts";
 import { toScenarioView } from "../view.ts";
 
 export interface RunInit {
@@ -24,6 +25,8 @@ export interface RunInit {
   scenarioId: string;
   /** Run seed override (Endless, resume). null: use the scenario's own seed. */
   seed: number | null;
+  /** Starting formation (RunInput.settings.formation). */
+  formation: PpFormationName;
   /** Calls to replay before the actor starts (resume). */
   calls: Call[];
   /** Origin-relative URL of the exported data; the worker builds its own DataSource from it. */
@@ -34,7 +37,8 @@ export type ToHost =
   | { type: "init"; init: RunInit }
   | { type: "start" }
   | { type: "call"; call: Call; callIndex: number }
-  | { type: "continue" };
+  | { type: "continue" }
+  | { type: "formation"; formation: PpFormationName };
 
 export type FatalKind = "load" | "resume";
 export type FromHost =
@@ -76,7 +80,7 @@ export class RunHost {
    * Kind "resume": the stored calls no longer replay (corrupt save, or the data changed).
    */
   static async create(init: RunInit, source: DataSource, emit: (m: FromHost) => void): Promise<CreateResult> {
-    const run = await source.runInput(init.scenarioId);
+    const run = await source.runInput(init.scenarioId, { ...V1_LOAD_OPTS, formation: init.formation });
     if (!run.ok) return { ok: false, kind: "load", error: run.error };
     const input: RunInput = init.seed === null ? run.value.loaded.input : { ...run.value.loaded.input, seed: init.seed };
     const state = replay(input, init.calls);
@@ -95,7 +99,7 @@ export class RunHost {
   }
 
   /** Handle one non-init message; always answers with a snapshot. O(applyCall). */
-  handle(msg: Exclude<ToHost, { type: "init" }>): void {
+  handle(msg: Exclude<ToHost, { type: "init" | "formation" }>): void {
     switch (msg.type) {
       case "start":
         this.actor.send({ type: "START" });
@@ -119,6 +123,15 @@ export class RunHost {
 
   stop(): void {
     this.actor.stop();
+  }
+
+  /** True before the first START: the only moment the starting formation may change. */
+  inIntro(): boolean {
+    return this.calls.length === 0 && this.actor.getSnapshot().value === "intro";
+  }
+
+  get startedWith(): RunInit {
+    return this.init;
   }
 
   /** Append the call only if the machine really applied it (duplicates and errors leave callCount alone). */
@@ -181,18 +194,32 @@ export class HostRunner {
 
   private async process(msg: ToHost): Promise<void> {
     if (msg.type === "init") {
-      this.host?.stop();
-      this.host = null;
-      const created = await RunHost.create(msg.init, this.sourceFor(msg.init.dataBase), this.emit);
-      if (!created.ok) {
-        this.emit({ type: "fatal", kind: created.kind, message: created.error });
-        return;
+      await this.start(msg.init);
+      return;
+    }
+    if (msg.type === "formation") {
+      const host = this.host;
+      // Ignored once the run has left the intro; the answering snapshot below keeps the caller's view in step.
+      if (host !== null && host.inIntro() && host.startedWith.formation !== msg.formation) {
+        await this.start({ ...host.startedWith, formation: msg.formation });
+      } else if (host !== null) {
+        this.emit({ type: "snapshot", snapshot: host.snapshot() });
       }
-      this.host = created.value;
-      created.value.ready();
       return;
     }
     this.host?.handle(msg);
+  }
+
+  private async start(init: RunInit): Promise<void> {
+    this.host?.stop();
+    this.host = null;
+    const created = await RunHost.create(init, this.sourceFor(init.dataBase), this.emit);
+    if (!created.ok) {
+      this.emit({ type: "fatal", kind: created.kind, message: created.error });
+      return;
+    }
+    this.host = created.value;
+    created.value.ready();
   }
 
   /** One DataSource per base URL, so replays and "play again" reuse the cached export. */

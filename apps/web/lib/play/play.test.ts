@@ -370,10 +370,10 @@ test("canSendCall: only while paused for a call and nothing is in flight", () =>
   }
 });
 
-test("optionDisabled: busy or cut by the clock disables, otherwise enabled", () => {
+test("optionDisabled: only a call in flight disables; clock-cut options stay playable (no dead end)", () => {
   assert.equal(optionDisabled({ cutByClock: false }, false), false);
   assert.equal(optionDisabled({ cutByClock: false }, true), true);
-  assert.equal(optionDisabled({ cutByClock: true }, false), true);
+  assert.equal(optionDisabled({ cutByClock: true }, false), false);
   assert.equal(optionDisabled({ cutByClock: true }, true), true);
 });
 

@@ -8,11 +8,11 @@
  * Reentrancy: every async step checks `generation`, so a stale plan/message from a disposed or
  * restarted run is dropped.
  */
-import type { Call } from "@powerplay/engine/sim-types.ts";
+import type { Call, PpFormationName } from "@powerplay/engine/sim-types.ts";
 import type { Loadable, Mode, RunControls, RunSnapshot } from "../contracts.ts";
 import type { DataSource } from "../data.ts";
 import type { FromHost, RunInit } from "./host.ts";
-import { clearRun, writeRun } from "./persistence.ts";
+import { clearRun, setStoredFormation, writeRun } from "./persistence.ts";
 import { planRun, type PlanDeps, type PlanOpts, type RunPlan } from "./plan.ts";
 import type { KeyValueStore } from "./store.ts";
 import type { Transport } from "./transport.ts";
@@ -30,6 +30,8 @@ export interface ControllerDeps {
 export interface RunControlsEx extends RunControls {
   /** Endless only: abandon/finish this run and start the next scenario from the queue. No-op for Daily. */
   playAgain(): void;
+  /** Intro only: choose the starting formation. It is saved with the run (replay key) and remembered per mode. */
+  setFormation(formation: PpFormationName): void;
 }
 
 const LOADING: Loadable<RunSnapshot> = { status: "loading" };
@@ -40,6 +42,8 @@ export class RunController {
   private transport: Transport | null = null;
   private generation = 0;
   private disposed = false;
+  /** START was sent: the starting formation is locked in even before the host's reply arrives. */
+  private startSent = false;
 
   private readonly deps: ControllerDeps;
   private readonly mode: Mode;
@@ -68,12 +72,14 @@ export class RunController {
     call: (c) => this.call(c),
     continue: () => this.continueRun(),
     playAgain: () => this.playAgain(),
+    setFormation: (f) => this.setFormation(f),
   };
 
   /** Plan and launch the run. Safe to call again (restarts). */
   async init(ignoreStored = false): Promise<void> {
     if (this.disposed) return;
     const gen = ++this.generation;
+    this.startSent = false;
     this.teardownTransport();
     this.set(LOADING);
     const planDeps: PlanDeps = {
@@ -100,8 +106,8 @@ export class RunController {
 
   private initFor(plan: RunPlan): RunInit {
     return {
-      mode: plan.mode, date: plan.date, scenarioId: plan.scenarioId, seed: plan.seed, calls: plan.calls,
-      dataBase: this.deps.dataBase,
+      mode: plan.mode, date: plan.date, scenarioId: plan.scenarioId, seed: plan.seed, formation: plan.formation,
+      calls: plan.calls, dataBase: this.deps.dataBase,
     };
   }
 
@@ -127,7 +133,7 @@ export class RunController {
     if (s.machineState === "intro" && s.calls.length === 0) return;
     writeRun(this.deps.store, {
       v: 1, mode: s.mode, date: s.date, scenarioId: s.scenario.id, seed: s.input.seed,
-      calls: s.calls, ended: s.machineState === "ended",
+      formation: s.input.settings.formation, calls: s.calls, ended: s.machineState === "ended",
     });
   }
 
@@ -138,6 +144,7 @@ export class RunController {
   private start(): void {
     const s = this.ready();
     if (s === null || s.machineState !== "intro") return;
+    this.startSent = true;
     this.transport?.post({ type: "start" });
   }
 
@@ -149,6 +156,18 @@ export class RunController {
     // Mark busy synchronously, before the reply: a second tap in the same frame is dropped here.
     this.set({ status: "ready", value: { ...s, busy: true } });
     this.transport?.post({ type: "call", call, callIndex: s.calls.length });
+  }
+
+  private setFormation(formation: PpFormationName): void {
+    const s = this.ready();
+    if (s === null || this.startSent || s.machineState !== "intro" || s.calls.length > 0) return;
+    if (s.input.settings.formation === formation) return;
+    const saved = setStoredFormation(this.deps.store, this.mode, formation);
+    if (!saved.ok) {
+      console.warn(`PowerPlay: could not save the formation: ${saved.error}`);
+      return;
+    }
+    this.transport?.post({ type: "formation", formation });
   }
 
   private continueRun(): void {

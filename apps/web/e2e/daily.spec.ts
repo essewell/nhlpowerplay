@@ -60,8 +60,10 @@ async function doFaceoff(page: Page): Promise<void> {
 }
 
 /** Zone entry / breakout: one tap on the first enabled option. */
-async function doMethod(page: Page): Promise<void> {
-  await clickFirstEnabled(page.locator("section"), "call option", page);
+async function doMethod(page: Page, screen: Screen): Promise<void> {
+  // The entry sheet also has lane and setup buttons; only the method rows are options here.
+  const scope = screen === "entry" ? page.getByRole("group", { name: fillCopy("entry.methods.label") }) : page.locator("section");
+  await clickFirstEnabled(scope, "call option", page);
 }
 
 /** Shot picker: first shot type + first target that together enable "Shoot", then Shoot. */
@@ -112,7 +114,10 @@ test.describe("Daily, start to finish (390x844 touch)", () => {
     await page.getByRole("link", { name: t("home.daily.cta") }).tap();
     await expect(page).toHaveURL(/\/play\/daily$/);
 
-    // Press start.
+    // Pick a starting formation, then press start.
+    const oneThreeOne = page.getByRole("button", { name: /^1-3-1\./ });
+    await oneThreeOne.tap();
+    await expect(oneThreeOne).toHaveAttribute("aria-pressed", "true");
     const start = page.getByRole("button", { name: exactName(t("home.daily.cta")) });
     await start.tap();
     await expect(start, "intro should leave after pressing start").toBeHidden();
@@ -137,7 +142,7 @@ test.describe("Daily, start to finish (390x844 touch)", () => {
           break;
         case "entry":
         case "breakout":
-          await doMethod(page);
+          await doMethod(page, screen);
           calls += 1;
           break;
         case "shot":

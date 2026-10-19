@@ -10,11 +10,14 @@
  *
  * Event kinds handled (packages/engine/src/sim.ts): call, draw:{pass,skate,faceoff,faceoff_loss_clear,entry,
  * breakout,intercept,loose,block,blocked_recover,shot,freeze,rebound,miss_recover,pk_possession,en_clear,
- * sh_goal,opening_faceoff}, faceoff_setup, goal, save, miss, sh_chance, clear, cut_by_clock, period_end, end.
- * Anything else becomes one neutral "Play continues" line instead of a crash.
+ * sh_goal,opening_faceoff}, faceoff_setup, setup, goal, save, miss, sh_chance, clear, cut_by_clock, period_end, end.
+ * Entry and OZ-faceoff draws may carry detail `lane` ("left"|"middle"|"right"), `method` and `formation`; each one
+ * that is present is worded ("Carry-in on the left · Overload set up"), each one that is absent falls back to the
+ * plain line. Anything else becomes one neutral "Play continues" line instead of a crash.
  */
 import type { RunEvent } from "@powerplay/engine/sim-types.ts";
 import type { ScenarioView } from "../contracts.ts";
+import { formationLabel } from "./formations.ts";
 import { fillCopy, type PlayCopyKey } from "./strings.ts";
 
 export type NarrationTone = "good" | "bad" | "neutral" | "goal" | "against";
@@ -62,6 +65,46 @@ export function lastCallIndex(log: readonly RunEvent[]): number {
 
 const num = (v: string | number | boolean | undefined): number | null => (typeof v === "number" ? v : null);
 const str = (v: string | number | boolean | undefined): string | null => (typeof v === "string" ? v : null);
+
+const LANE_KEYS = {
+  left: "narrate.entry.lane.left",
+  middle: "narrate.entry.lane.middle",
+  right: "narrate.entry.lane.right",
+} as const satisfies Record<string, PlayCopyKey>;
+
+const ENTRY_IN_KEYS = {
+  carry: "narrate.entry.in.carry",
+  drop: "narrate.entry.in.drop",
+  dump: "narrate.entry.in.dump",
+} as const satisfies Record<string, PlayCopyKey>;
+
+const ENTRY_FAIL_KEYS = {
+  carry: "narrate.entry.fail.carry",
+  drop: "narrate.entry.fail.drop",
+  dump: "narrate.entry.fail.dump",
+} as const satisfies Record<string, PlayCopyKey>;
+
+const hasKey = <T extends object>(table: T, k: string | null): k is Extract<keyof T, string> =>
+  k !== null && Object.hasOwn(table, k);
+
+/** "Overload set up", or null when the log carries no (known) formation. A name this UI does not know is shown prettified. */
+function setupPhrase(formation: string | null, side: string | null): string | null {
+  if (formation === null || formation.length === 0) return null;
+  const name = formationLabel(formation) ?? formation.replaceAll("_", " ");
+  if (formation === "overload" && (side === "left" || side === "right")) {
+    return fillCopy("narrate.setup.side", { formation: name, side: fillCopy(side === "left" ? "formation.side.left" : "formation.side.right") });
+  }
+  return fillCopy("narrate.setup", { formation: name });
+}
+
+const laneText = (v: string | null): string | null => (hasKey(LANE_KEYS, v) ? fillCopy(LANE_KEYS[v]) : null);
+
+/** "Carry-in on the left" for a clean entry whose method and lane are known. */
+const entryInText = (method: string | null, lane: string, holder: string | null): string =>
+  method === "drop" && holder !== null ? fillCopy("narrate.entry.in.drop.to", { lane, name: holder }) : fillCopy(hasKey(ENTRY_IN_KEYS, method) ? ENTRY_IN_KEYS[method] : "narrate.entry.in.other", { lane });
+
+const joinParts = (first: string, second: string | null): string =>
+  second === null ? first : fillCopy("narrate.join", { first, second });
 
 export function narrate(log: readonly RunEvent[], fromIndex: number, ctx: NarrateCtx): Narration {
   const start = Number.isInteger(fromIndex) ? Math.max(0, fromIndex) : 0;
@@ -140,14 +183,33 @@ export function narrate(log: readonly RunEvent[], fromIndex: number, ctx: Narrat
         break;
       }
       case "draw:entry": {
+        const method = str(d["method"]);
+        const lane = laneText(str(d["lane"]));
         if (hit) {
-          say("narrate.entry.ok", "good", { team: pp });
+          // The "setup" event that follows a clean entry rewrites this line with the formation.
+          if (lane === null) say("narrate.entry.ok", "good", { team: pp });
+          else lines.push({ text: entryInText(method, lane, null), tone: "good" });
           break;
         }
-        const method = str(d["method"]);
-        if (method === "carry") say("narrate.entry.carry.fail", "bad");
+        if (lane !== null) {
+          const key = hasKey(ENTRY_FAIL_KEYS, method) ? ENTRY_FAIL_KEYS[method] : "narrate.entry.fail.other";
+          say(key, "bad", { lane, team: pk });
+        } else if (method === "carry") say("narrate.entry.carry.fail", "bad");
         else if (method === "drop") say("narrate.entry.drop.fail", "bad");
         else say("narrate.entry.dump.fail", "bad", { team: pk });
+        break;
+      }
+      case "setup": {
+        // Logged after a clean entry (trigger "entry": method, lane, formation) or an OZ draw won (trigger "faceoff").
+        const setup = setupPhrase(str(d["formation"]), str(d["side"]));
+        const prev = lines[lines.length - 1];
+        if (prev === undefined) break;
+        if (str(d["trigger"]) === "entry") {
+          const lane = laneText(str(d["lane"]));
+          prev.text = joinParts(lane === null ? prev.text : entryInText(str(d["method"]), lane, nameOf(num(d["carrierId"]))), setup);
+        } else if (setup !== null) {
+          prev.text = joinParts(prev.text, setup);
+        }
         break;
       }
       case "draw:breakout":

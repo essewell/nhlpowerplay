@@ -218,7 +218,8 @@ test("legalCalls: zone entry and breakout phases", () => {
   const input = fiveOnFour();
   const base = val(initRun(input));
   const ze = val(legalCalls({ ...base, phase: { kind: "zone_entry" }, carrier: { kind: "pp", id: 101 } }, input));
-  assert.deepEqual(ze.map((o) => o.call.type === "zone_entry" ? o.call.method : "").sort(), ["carry", "drop", "dump"]);
+  assert.deepEqual([...new Set(ze.map((o) => o.call.type === "zone_entry" ? o.call.method : ""))].sort(), ["carry", "drop", "dump"]);
+  assert.equal(ze.length, 9); // 3 methods x 3 lanes
   const bo = val(legalCalls({ ...base, phase: { kind: "breakout" }, carrier: { kind: "pp", id: 101 } }, input));
   assert.deepEqual(bo.map((o) => o.call.type === "breakout" ? o.call.method : "").sort(), ["carry", "pass", "rim"]);
   for (const o of [...ze, ...bo]) assert.ok(o.p > 0 && o.p < 1);
@@ -227,7 +228,7 @@ test("legalCalls: entry odds use the carrier's multipliers", () => {
   const input = fiveOnFour();
   const base = val(initRun(input));
   const ze = val(legalCalls({ ...base, phase: { kind: "zone_entry" }, carrier: { kind: "pp", id: 103 } }, input));
-  const carry = findOption(ze, (c) => c.type === "zone_entry" && c.method === "carry");
+  const carry = findOption(ze, (c) => c.type === "zone_entry" && c.method === "carry" && c.lane === "middle");
   const logit = Math.log(ENTRY.CARRY_P / (1 - ENTRY.CARRY_P)) + Math.log(0.9); // Synth C puckControlMult 0.9
   assert.ok(Math.abs(carry.p - 1 / (1 + Math.exp(-logit))) < 1e-12);
 });

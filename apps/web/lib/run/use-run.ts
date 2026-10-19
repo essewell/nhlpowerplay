@@ -25,6 +25,7 @@ export function useRun(mode: Mode, scenarioId: string | null, opts: UseRunOpts =
     call: (c) => ctlRef.current?.controls.call(c),
     continue: () => ctlRef.current?.controls.continue(),
     playAgain: () => ctlRef.current?.controls.playAgain(),
+    setFormation: (f) => ctlRef.current?.controls.setFormation(f),
   }));
   const date = opts.date;
 

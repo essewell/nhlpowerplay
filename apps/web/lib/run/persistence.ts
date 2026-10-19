@@ -2,21 +2,26 @@
  * What is saved in localStorage for a run (v1 has no backend; docs/LAUNCH.md):
  *   powerplay.v1.run.daily    StoredRun   latest Daily run (its `ended` flag is the "already played" lock)
  *   powerplay.v1.run.endless  StoredRun   latest Endless run
+ *   powerplay.v1.formation.<mode>  PpFormationName  last starting formation the player picked in that mode
  *   powerplay.v1.endless.queue  QueueState  seed + how many scenarios were served (rebuilds EndlessQueue)
  *   powerplay.v1.daily.history  string[]    dates (YYYY-MM-DD, America/Vancouver) of finished Dailies, for the streak
- * A StoredRun is the replay key: (scenarioId, seed, calls) -> sim.replay gives the exact state.
+ * A StoredRun is the replay key: (scenarioId, seed, formation, calls) -> sim.replay gives the exact state.
+ * `formation` is the STARTING formation (RunInput.settings.formation); a run saved before formations existed has none and
+ * replays with umbrella, which is what it was played with.
  *
  * Reads validate shape and return Result (a corrupt value is an explicit error, never a silent
  * default). Main thread only. All O(size of the value).
  */
 import { err, ok, type Result } from "@powerplay/engine/result.ts";
 import { isCalendarDate } from "@powerplay/engine/schema.ts";
-import type { Call } from "@powerplay/engine/sim-types.ts";
+import type { Call, PpFormationName } from "@powerplay/engine/sim-types.ts";
 import type { Mode } from "../contracts.ts";
+import { DEFAULT_FORMATION, isFormationName } from "../play/formations.ts";
 import type { KeyValueStore } from "./store.ts";
 
 export const STORAGE_KEYS = {
   run: (mode: Mode): string => `powerplay.v1.run.${mode}`,
+  formation: (mode: Mode): string => `powerplay.v1.formation.${mode}`,
   queue: "powerplay.v1.endless.queue",
   history: "powerplay.v1.daily.history",
 } as const;
@@ -28,6 +33,8 @@ export interface StoredRun {
   date: string | null;
   scenarioId: string;
   seed: number;
+  /** Starting formation. Absent in runs saved before formations existed: read it with `storedFormation`. */
+  formation?: PpFormationName;
   calls: Call[];
   /** true once the run reached its end: for Daily this is the "no second attempt" lock and the result. */
   ended: boolean;
@@ -70,14 +77,48 @@ export function parseStoredRun(raw: unknown, mode: Mode): Result<StoredRun> {
   if (typeof raw.scenarioId !== "string" || !SCENARIO_ID_RE.test(raw.scenarioId)) return err(`${label}: bad scenarioId`);
   if (!isUint32(raw.seed)) return err(`${label}: bad seed`);
   if (typeof raw.ended !== "boolean") return err(`${label}: bad ended flag`);
+  if (raw.formation !== undefined && !isFormationName(raw.formation)) return err(`${label}: bad formation`);
   const calls = raw.calls;
   if (!Array.isArray(calls) || calls.length > MAX_STORED_CALLS) return err(`${label}: bad calls`);
   for (const c of calls) {
     if (!isRecord(c) || typeof c.type !== "string" || !CALL_TYPES.has(c.type)) return err(`${label}: bad call`);
   }
   return ok({
-    v: 1, mode, date, scenarioId: raw.scenarioId, seed: raw.seed, calls: calls as Call[], ended: raw.ended,
+    v: 1, mode, date, scenarioId: raw.scenarioId, seed: raw.seed, formation: raw.formation ?? DEFAULT_FORMATION,
+    calls: calls as Call[], ended: raw.ended,
   });
+}
+
+/** The formation a stored run starts with: its own, or umbrella for a run saved before formations existed. */
+export function storedFormation(run: Pick<StoredRun, "formation">): PpFormationName {
+  return run.formation ?? DEFAULT_FORMATION;
+}
+
+/** Last starting formation the player picked in `mode`; umbrella when none, unreadable or unknown. O(1). */
+export function readFormationPref(store: KeyValueStore, mode: Mode): PpFormationName {
+  const raw = store.get(STORAGE_KEYS.formation(mode));
+  return isFormationName(raw) ? raw : DEFAULT_FORMATION;
+}
+
+/** false when the browser refused the write. */
+export function writeFormationPref(store: KeyValueStore, mode: Mode, formation: PpFormationName): boolean {
+  return store.set(STORAGE_KEYS.formation(mode), formation);
+}
+
+/**
+ * Change the starting formation of the stored run, only while it has no calls (the formation is part of the replay
+ * key, so it cannot change once a call has been applied). Also remembers it as the mode's preference.
+ * Err when there is no usable stored run or it already has calls.
+ */
+export function setStoredFormation(store: KeyValueStore, mode: Mode, formation: PpFormationName): Result<StoredRun> {
+  const read = readRun(store, mode);
+  if (!read.ok) return read;
+  if (read.value === null) return err(`${STORAGE_KEYS.run(mode)}: no run to change`);
+  if (read.value.calls.length > 0) return err(`${STORAGE_KEYS.run(mode)}: the formation is fixed once a call is made`);
+  const next: StoredRun = { ...read.value, formation };
+  writeRun(store, next);
+  writeFormationPref(store, mode, formation);
+  return ok(next);
 }
 
 /** Ok(null) when nothing is stored; Err when something is stored but unusable. */

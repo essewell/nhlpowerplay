@@ -177,7 +177,7 @@ function ReadyScreen({ snapshot, mode, controls, resumedAt, showEnded }: ReadyPr
   const screen = (() => {
     switch (machineState) {
       case "intro":
-        return <Intro snapshot={snapshot} mode={mode} onStart={controls.start} />;
+        return <Intro snapshot={snapshot} mode={mode} onStart={controls.start} onFormation={controls.setFormation} />;
       case "faceoffCall":
         return <FaceoffSheet key={callKey} snapshot={snapshot} onCall={controls.call} ticker={ticker} />;
       case "zoneEntryCall":

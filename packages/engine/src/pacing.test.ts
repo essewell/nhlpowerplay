@@ -41,6 +41,7 @@ const RANDOM_MIN_IN_ZONE_SHARE = 0.3;
 type Bucket = "inzone" | "faceoff" | "entry" | "regroup" | "pk" | "loose";
 const BUCKETS: readonly Bucket[] = ["inzone", "faceoff", "entry", "regroup", "pk", "loose"];
 type PolicyName = "greedy" | "random";
+const FORMATIONS = ["umbrella", "one_three_one", "overload", "spread"] as const;
 
 function val<T>(r: Result<T>): T {
   if (!r.ok) assert.fail(`expected ok, got error: ${r.error}`);
@@ -161,7 +162,7 @@ export function measure(fixture: string, policy: PolicyName, runs: number): Summ
   let total = 0, decisions = 0, entries = 0, pp = 0, sh = 0;
   for (let i = 0; i < runs; i++) {
     const seed = fnv1a(`pacing-${fixture}-${i}`);
-    const input = build({ seed, askEveryTouch: false, formation: i % 2 === 0 ? "umbrella" : "one_three_one" });
+    const input = build({ seed, askEveryTouch: false, formation: FORMATIONS[i % FORMATIONS.length] });
     const rand = mulberry32((seed ^ POLICY_SEED_XOR) >>> 0);
     const r = playRun(input, policy === "greedy" ? greedyPolicy(rand) : randomPolicy(rand));
     for (const b of BUCKETS) sec[b] += r.seconds[b];

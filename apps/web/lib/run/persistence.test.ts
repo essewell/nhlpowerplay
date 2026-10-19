@@ -19,7 +19,7 @@ test("persistence: write then read round-trips a run; clear removes it", () => {
   assert.equal(writeRun(store, run()), false, "memory store reports not persistent but keeps the value");
   const back = readRun(store, "daily");
   assert.ok(back.ok);
-  assert.deepEqual(back.value, run());
+  assert.deepEqual(back.value, { ...run(), formation: "umbrella" }, "a run without a formation reads as umbrella");
   clearRun(store, "daily");
   assert.deepEqual(readRun(store, "daily"), { ok: true, value: null });
 });

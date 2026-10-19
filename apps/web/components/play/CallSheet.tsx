@@ -8,7 +8,7 @@
  */
 import { useMemo, useState } from "react";
 import { pct } from "@powerplay/engine/likelihood.ts";
-import type { Call } from "@powerplay/engine/sim-types.ts";
+import type { Call, EntryLane, PpFormationName } from "@powerplay/engine/sim-types.ts";
 import { Button } from "../ui/Button.tsx";
 import { OptionRow } from "../ui/OptionRow.tsx";
 import { StateCard } from "../ui/StateCard.tsx";
@@ -16,10 +16,13 @@ import { cx, FOCUS_RING } from "../ui/cx.ts";
 import type { RunSnapshot } from "../../lib/contracts.ts";
 import { t, type CopyKey } from "../../lib/copy.ts";
 import {
-  FACEOFF_TARGET_COPY, faceoffTakers, findFaceoff, groupOptions, optionDisabled, playerLabel, sortByChance,
+  bestLaneChance, currentSetup, defaultEntryLane, ENTRY_LANES, entryLanes, entryMethods, entryOption,
+  FACEOFF_TARGET_COPY, faceoffTakers, findFaceoff, groupOptions, optionDisabled, playerLabel, ppOnIce, sortByChance,
+  withFormation,
 } from "../../lib/play/options.ts";
 import { scoreboardModel } from "../../lib/play/scoreboard.ts";
 import { fillCopy, pctLabel, playPctLabel, PLAY_COPY, type PlayCopyKey } from "../../lib/play/strings.ts";
+import { FormationPicker } from "./FormationPicker.tsx";
 import { Scoreboard } from "./Scoreboard.tsx";
 
 /** Screen-reader name for a call button: "Alpha, 11, 50% wins the draw". Skips empty parts. O(1). */
@@ -60,6 +63,10 @@ function Shell({ snapshot, title, body, ticker, children }: { snapshot: RunSnaps
 export function FaceoffSheet({ snapshot, onCall, ticker }: Props) {
   const [takerId, setTakerId] = useState<number | null>(null);
   const [target, setTarget] = useState<string | null>(null);
+  const setup = currentSetup(snapshot);
+  const [formation, setFormation] = useState<PpFormationName>(setup.formation);
+  // The setup only matters when the PP wins a draw in the offensive zone; a centre-ice draw starts a fresh entry.
+  const offensiveDraw = snapshot.phase.kind === "faceoff" && snapshot.phase.dot !== "centre";
   const faceoff = useMemo(() => groupOptions(snapshot.options).faceoff, [snapshot.options]);
   const takers = sortByChance(faceoffTakers(faceoff));
   const chosen = takerId !== null && target !== null ? findFaceoff(faceoff, takerId, target) : null;
@@ -122,11 +129,22 @@ export function FaceoffSheet({ snapshot, onCall, ticker }: Props) {
               })}
             </div>
           </div>
+          {offensiveDraw ? (
+            <FormationPicker
+              compact
+              value={formation}
+              onChange={setFormation}
+              skaters={ppOnIce(snapshot)}
+              side={setup.side}
+              label={fillCopy("formation.faceoff.label")}
+              disabled={snapshot.busy}
+            />
+          ) : null}
           <div className="mt-auto">
             <Button
               disabled={!canDrop}
               onClick={() => {
-                if (chosen !== null) onCall(chosen.call);
+                if (chosen !== null) onCall(offensiveDraw ? withFormation(chosen.call, formation, setup.formation) : chosen.call);
               }}
             >
               {t("faceoff.cta")}
@@ -157,21 +175,115 @@ const BREAKOUT_ROWS: Record<string, MethodRow> = {
   rim: { key: "rim", nameKey: "breakout.rim", subKey: "breakout.rim.sub" },
 };
 
-/** Zone entry (kind "entry") or breakout (kind "breakout"): one tap sends the call. */
-export function MethodSheet({ snapshot, onCall, kind, ticker }: Props & { kind: "entry" | "breakout" }) {
-  const grouped = useMemo(() => groupOptions(snapshot.options), [snapshot.options]);
-  const rows = kind === "entry" ? ENTRY_ROWS : BREAKOUT_ROWS;
-  const options = kind === "entry" ? grouped.zoneEntry : grouped.breakout;
-  const pctWord = kind === "entry" ? pctLabel("entry.pct") : playPctLabel("breakout.pct");
-  const title = kind === "entry" ? t("entry.title") : fillCopy("breakout.title");
-  const body = kind === "entry" ? t("entry.body") : fillCopy("breakout.body");
+const LANE_COPY: Record<EntryLane, PlayCopyKey> = {
+  left: "entry.lane.left",
+  middle: "entry.lane.middle",
+  right: "entry.lane.right",
+};
+
+/**
+ * Zone entry: pick a lane (when the engine prices lanes), then tap a method. The odds shown are for the selected
+ * lane; the formation picker is the setup after a clean entry. One tap on a method sends lane + formation.
+ * Without lanes on the options (an engine with one option per method) the lane selector is hidden.
+ */
+function EntrySheet({ snapshot, onCall, ticker }: Props) {
+  const entry = useMemo(() => groupOptions(snapshot.options).zoneEntry, [snapshot.options]);
+  const lanes = useMemo(() => entryLanes(entry), [entry]);
+  const methods = useMemo(() => entryMethods(entry), [entry]);
+  const [laneChoice, setLaneChoice] = useState<EntryLane | null>(() => defaultEntryLane(entry));
+  const lane = laneChoice !== null && lanes.includes(laneChoice) ? laneChoice : defaultEntryLane(entry);
+  const setup = currentSetup(snapshot);
+  const [formation, setFormation] = useState<PpFormationName>(setup.formation);
+  const pctWord = pctLabel("entry.pct");
+  const bestWord = playPctLabel("entry.lane.best");
 
   return (
-    <Shell snapshot={snapshot} title={title} body={body} ticker={ticker}>
+    <Shell snapshot={snapshot} title={t("entry.title")} body={t("entry.body")} ticker={ticker}>
+      {lane === null ? null : (
+        <div role="group" aria-label={fillCopy("entry.lane.label")} className="flex flex-col gap-1.5">
+          <h2 className="m-0 text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+            {fillCopy("entry.lane.label")}
+          </h2>
+          <div className="grid grid-cols-3 gap-1.5">
+            {ENTRY_LANES.filter((l) => lanes.includes(l)).map((l) => {
+              const best = bestLaneChance(entry, l);
+              const name = fillCopy(LANE_COPY[l]);
+              return (
+                <button
+                  key={l}
+                  type="button"
+                  aria-pressed={lane === l}
+                  aria-label={best === null ? name : callLabel([name], best, bestWord)}
+                  disabled={snapshot.busy}
+                  onClick={() => setLaneChoice(l)}
+                  className={cx(
+                    "box-border flex min-h-touch flex-col items-center justify-center rounded-sm text-white",
+                    "disabled:cursor-not-allowed disabled:opacity-60",
+                    lane === l ? "border-2 border-accent bg-surface-raised" : "border border-border bg-surface-sunk text-text-soft",
+                    FOCUS_RING,
+                  )}
+                >
+                  <span className="font-display text-[17px] font-bold uppercase leading-tight">{name}</span>
+                  {best === null ? null : (
+                    <span className="text-[11px] leading-tight text-text-muted">{pct(best)} {bestWord}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div role="group" aria-label={fillCopy("entry.methods.label")} className="flex flex-col gap-1.5">
+        {methods.map((method, i) => {
+          const row = ENTRY_ROWS[method];
+          const o = entryOption(entry, method, lane);
+          if (row === undefined || o === null) return null;
+          return (
+            <OptionRow
+              key={method}
+              badge={i + 1}
+              name={text(row.nameKey)}
+              sub={o.cutByClock ? fillCopy("play.cut") : text(row.subKey)}
+              value={o.p}
+              valueLabel={pctWord}
+              ariaLabel={callLabel([text(row.nameKey), lane === null ? null : fillCopy(LANE_COPY[lane])], o.p, pctWord)}
+              disabled={optionDisabled(o, snapshot.busy)}
+              onSelect={() => onCall(withFormation(o.call, formation, setup.formation))}
+            />
+          );
+        })}
+      </div>
+
+      <FormationPicker
+        compact
+        value={formation}
+        onChange={setFormation}
+        skaters={ppOnIce(snapshot)}
+        side={setup.side}
+        label={fillCopy("formation.entry.label")}
+        disabled={snapshot.busy}
+      />
+    </Shell>
+  );
+}
+
+/** Zone entry (kind "entry") or breakout (kind "breakout"): one tap sends the call. */
+export function MethodSheet({ snapshot, onCall, kind, ticker }: Props & { kind: "entry" | "breakout" }) {
+  if (kind === "entry") return <EntrySheet snapshot={snapshot} onCall={onCall} ticker={ticker} />;
+  return <BreakoutSheet snapshot={snapshot} onCall={onCall} ticker={ticker} />;
+}
+
+function BreakoutSheet({ snapshot, onCall, ticker }: Props) {
+  const options = useMemo(() => groupOptions(snapshot.options).breakout, [snapshot.options]);
+  const pctWord = playPctLabel("breakout.pct");
+
+  return (
+    <Shell snapshot={snapshot} title={fillCopy("breakout.title")} body={fillCopy("breakout.body")} ticker={ticker}>
       <div className="flex flex-col gap-1.5">
         {options.map((o, i) => {
           const method = o.call.method;
-          const row = rows[method];
+          const row = BREAKOUT_ROWS[method];
           if (row === undefined) return null;
           return (
             <OptionRow

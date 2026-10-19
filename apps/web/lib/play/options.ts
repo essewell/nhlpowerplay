@@ -5,7 +5,7 @@
  */
 import { SET_PLAYS, type SetPlayId, type ShotOption, type SpotName } from "@powerplay/engine/constants.ts";
 import type { Corner } from "@powerplay/engine/likelihood.ts";
-import type { Call, CallOption } from "@powerplay/engine/sim-types.ts";
+import type { Call, CallOption, EntryLane, EntryMethod, PpFormationName } from "@powerplay/engine/sim-types.ts";
 import type { RunSnapshot } from "../contracts.ts";
 import type { CopyKey } from "../copy.ts";
 
@@ -64,9 +64,13 @@ export function canSendCall(s: Pick<RunSnapshot, "busy" | "machineState">): bool
   return !s.busy && CALL_STATES.has(s.machineState);
 }
 
-/** An option's button is disabled while a call is in flight or the clock would run out first. */
-export function optionDisabled(o: Pick<CallOption, "cutByClock">, busy: boolean): boolean {
-  return busy || o.cutByClock;
+/**
+ * An option's button is disabled only while a call is in flight. Options the clock would cut stay
+ * playable (shown with the "not enough time" note): the engine resolves them by running the clock out,
+ * and disabling them could leave the player with nothing to tap near the end of a power play.
+ */
+export function optionDisabled(_o: Pick<CallOption, "cutByClock">, busy: boolean): boolean {
+  return busy;
 }
 
 // ---------------------------------------------------------------------------- players
@@ -201,4 +205,91 @@ export function faceoffTakers(faceoff: readonly OptionOf<"faceoff">[]): { takerI
 /** The faceoff call for a taker and target, or null if the engine did not offer it. */
 export function findFaceoff(faceoff: readonly OptionOf<"faceoff">[], takerId: number, target: string): OptionOf<"faceoff"> | null {
   return faceoff.find((o) => o.call.takerId === takerId && o.call.target === target) ?? null;
+}
+
+// ---------------------------------------------------------------------------- zone entry: lanes and setup
+
+/** Display order of the lane selector, attacker's left first. */
+export const ENTRY_LANES = ["left", "middle", "right"] as const satisfies readonly EntryLane[];
+
+/**
+ * Lanes the engine priced, in display order. Empty when the options carry no lane (an engine that offers one
+ * option per method): the UI then hides the lane selector. O(C).
+ */
+export function entryLanes(entry: readonly OptionOf<"zone_entry">[]): EntryLane[] {
+  return ENTRY_LANES.filter((lane) => entry.some((o) => o.call.lane === lane));
+}
+
+/** Methods offered, first-seen order (the engine's order). O(C). */
+export function entryMethods(entry: readonly OptionOf<"zone_entry">[]): EntryMethod[] {
+  const seen: EntryMethod[] = [];
+  for (const o of entry) if (!seen.includes(o.call.method)) seen.push(o.call.method);
+  return seen;
+}
+
+/**
+ * The option for a method in a lane. `lane` null = no lane concept: the method's first option.
+ * A lane the engine did not price for that method gives null (the row is skipped, never invented). O(C).
+ */
+export function entryOption(
+  entry: readonly OptionOf<"zone_entry">[], method: EntryMethod, lane: EntryLane | null,
+): OptionOf<"zone_entry"> | null {
+  return entry.find((o) => o.call.method === method && (lane === null || o.call.lane === lane)) ?? null;
+}
+
+/** Highest chance among a lane's options that fit the clock; null when none does (or the lane is absent). O(C). */
+export function bestLaneChance(entry: readonly OptionOf<"zone_entry">[], lane: EntryLane): number | null {
+  let best: number | null = null;
+  for (const o of entry) {
+    if (o.call.lane !== lane || o.cutByClock) continue;
+    if (best === null || o.p > best) best = o.p;
+  }
+  return best;
+}
+
+/**
+ * Lane preselected when the sheet opens: the lane with the best top chance, middle on a tie (and middle when no
+ * lane fits the clock), so the likeliest entry is one tap while the other lanes stay a tap away. null = no lanes. O(L x C).
+ */
+export function defaultEntryLane(entry: readonly OptionOf<"zone_entry">[]): EntryLane | null {
+  const lanes = entryLanes(entry);
+  if (lanes.length === 0) return null;
+  let best: EntryLane | null = null;
+  let bestP = Number.NEGATIVE_INFINITY;
+  for (const lane of lanes) {
+    const p = bestLaneChance(entry, lane);
+    if (p === null) continue;
+    if (p > bestP || (p === bestP && lane === "middle")) {
+      best = lane;
+      bestP = p;
+    }
+  }
+  return best ?? (lanes.includes("middle") ? "middle" : (lanes[0] ?? null));
+}
+
+/**
+ * The call to send for an entry / OZ faceoff option with the player's setup applied. The engine puts the current
+ * formation on the option; this only overrides it when the player chose another. An option without the field
+ * (older engine) stays untouched while the choice equals the current formation. O(1).
+ */
+export function withFormation<C extends Extract<Call, { type: "zone_entry" | "faceoff" }>>(
+  call: C, chosen: PpFormationName, current: PpFormationName,
+): C {
+  const unchanged = call.formation === undefined ? chosen === current : call.formation === chosen;
+  return unchanged ? call : { ...call, formation: chosen };
+}
+
+/** PP skaters on the ice now (picks the 4 / 5 / 6 diagram). Before the first placement, the scenario's strength. O(1). */
+export function ppOnIce(s: Pick<RunSnapshot, "state" | "scenario">): number {
+  return s.state.ppSpots.length > 0 ? s.state.ppSpots.length : s.scenario.strength.pp;
+}
+
+/**
+ * The formation on the ice and its strong side. A state without them (an engine that predates formations) reads as
+ * the run's starting formation, left. The parameter is deliberately loose so that case type-checks. O(1).
+ */
+export function currentSetup(
+  s: { state: { formation?: PpFormationName; formationSide?: "left" | "right" }; input: { settings: { formation: PpFormationName } } },
+): { formation: PpFormationName; side: "left" | "right" } {
+  return { formation: s.state.formation ?? s.input.settings.formation, side: s.state.formationSide ?? "left" };
 }

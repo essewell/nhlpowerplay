@@ -14,6 +14,7 @@ import type { Result } from "./result.ts";
 import type { PpFormationName } from "./sim-types.ts";
 
 export interface PpSpot { id: number; spot: SpotName }
+export type FormationSide = "left" | "right";
 
 /** Compile-time check that the constants table covers exactly the formation names in sim-types. */
 const FORMATIONS: Record<PpFormationName, Record<PpSkaterCount, readonly SpotName[]>> = PP_FORMATIONS;
@@ -36,27 +37,97 @@ export function spotPos(spot: SpotName): Vec2 {
   return { x: p.x, y: p.y };
 }
 
+/** O(1). Mirror a spot across the rink's long axis ("half_wall_left" <-> "half_wall_right"); centre spots map to themselves. */
+export function mirrorSpot(spot: SpotName): SpotName {
+  const flipped = spot.endsWith("_left") ? spot.replace(/_left$/, "_right")
+    : spot.endsWith("_right") ? spot.replace(/_right$/, "_left") : spot;
+  return isSpotName(flipped) ? flipped : spot;
+}
+
 /**
- * O(n) for n skaters. Assign the formation's spot list for that skater count: the carrier gets the
- * first (default puck-carrier) spot, the others take the remaining spots in input order.
+ * O(n). The ordered spot list of a formation for `n` skaters; only "overload" depends on `side`
+ * (its table is written for the left, the right side is the mirror image).
  */
-export function placePp(skaterIds: number[], formation: PpFormationName, carrierId: number): Result<PpSpot[]> {
+export function formationSpots(formation: PpFormationName, n: number, side: FormationSide = "left"): Result<SpotName[]> {
   if (!Object.hasOwn(FORMATIONS, formation)) return err(`unknown PP formation ${String(formation)}`);
-  const n = skaterIds.length;
+  if (side !== "left" && side !== "right") return err(`unknown formation side ${String(side)}`);
   if (!isSkaterCount(n)) return err(`PP formation needs 4, 5 or 6 skaters, got ${n}`);
+  const spots = [...FORMATIONS[formation][n]];
+  return ok(formation === "overload" && side === "right" ? spots.map(mirrorSpot) : spots);
+}
+
+function checkIds(skaterIds: readonly number[]): Result<Set<number>> {
   const seen = new Set<number>();
   for (const id of skaterIds) {
     if (!Number.isInteger(id)) return err(`invalid skater id ${id}`);
     if (seen.has(id)) return err(`duplicate skater id ${id}`);
     seen.add(id);
   }
-  if (!seen.has(carrierId)) return err(`carrier ${carrierId} is not among the PP skaters`);
-  const spots = FORMATIONS[formation][n];
+  return ok(seen);
+}
+
+/**
+ * O(n) for n skaters. Assign the formation's spot list for that skater count: the carrier gets the
+ * first (default puck-carrier) spot, the others take the remaining spots in input order.
+ * `side` only matters for "overload" (default "left").
+ */
+export function placePp(skaterIds: number[], formation: PpFormationName, carrierId: number,
+  side: FormationSide = "left"): Result<PpSpot[]> {
+  const n = skaterIds.length;
+  const spots = formationSpots(formation, n, side);
+  if (!spots.ok) return spots;
+  const seen = checkIds(skaterIds);
+  if (!seen.ok) return seen;
+  if (!seen.value.has(carrierId)) return err(`carrier ${carrierId} is not among the PP skaters`);
   const order = [carrierId, ...skaterIds.filter((id) => id !== carrierId)];
   const out: PpSpot[] = [];
   for (let i = 0; i < n; i++) {
-    const id = order[i], spot = spots[i];
+    const id = order[i], spot = spots.value[i];
     if (id === undefined || spot === undefined) return err(`formation ${formation} has no spot ${i} for ${n} skaters`);
+    out.push({ id, spot });
+  }
+  return ok(out);
+}
+
+/**
+ * O(n^2) for n <= 6. Like placePp, but some skaters are pinned to exact spots (zone-entry landings).
+ * A pin on a spot the formation uses simply takes that spot; a pin elsewhere takes the place of the
+ * formation spot nearest to it. Everyone else fills the remaining formation spots in input order.
+ * Pins need distinct skaters (all on the ice) and distinct spots.
+ */
+export function placePpPinned(skaterIds: number[], formation: PpFormationName, side: FormationSide,
+  pins: readonly PpSpot[]): Result<PpSpot[]> {
+  const spots = formationSpots(formation, skaterIds.length, side);
+  if (!spots.ok) return spots;
+  const seen = checkIds(skaterIds);
+  if (!seen.ok) return seen;
+  const pinIds = new Set<number>(), pinSpots = new Set<SpotName>();
+  for (const p of pins) {
+    if (!seen.value.has(p.id)) return err(`pinned skater ${p.id} is not among the PP skaters`);
+    if (!isSpotName(p.spot)) return err(`unknown spot ${String(p.spot)}`);
+    if (pinIds.has(p.id)) return err(`skater ${p.id} pinned twice`);
+    if (pinSpots.has(p.spot)) return err(`spot ${p.spot} pinned twice`);
+    pinIds.add(p.id);
+    pinSpots.add(p.spot);
+  }
+  const free = spots.value.filter((sp) => !pinSpots.has(sp));
+  for (const p of pins) {
+    if (spots.value.includes(p.spot)) continue;
+    // Pinned outside the formation: the nearest unclaimed formation spot is vacated for it.
+    let best = -1, bestD = Infinity;
+    free.forEach((sp, i) => {
+      const d = dist(spotPos(sp), spotPos(p.spot));
+      if (d < bestD) { best = i; bestD = d; }
+    });
+    if (best < 0) return err("no formation spot left to vacate for a pinned skater");
+    free.splice(best, 1);
+  }
+  const out: PpSpot[] = [];
+  let next = 0;
+  for (const id of skaterIds) {
+    const pin = pins.find((p) => p.id === id);
+    const spot = pin !== undefined ? pin.spot : free[next++];
+    if (spot === undefined) return err("formation has fewer free spots than unpinned skaters");
     out.push({ id, spot });
   }
   return ok(out);

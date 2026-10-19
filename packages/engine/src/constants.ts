@@ -143,6 +143,10 @@ type Spots6 = readonly [SpotName, SpotName, SpotName, SpotName, SpotName, SpotNa
  * PP formations as ordered spot lists per skater count; the first spot is the puck carrier's default.
  * ASSUMPTION — tune. umbrella: QB at the top, flanks on the half walls, bumper + net front.
  * one_three_one: QB on the right half wall, one point, bumper, left flank at the circle top, net front.
+ * overload: written for the LEFT strong side; formation.ts mirrors every "_left"/"_right" spot name when
+ *   the strong side is right. Carrier on the strong half wall, one low on the goal line, bumper and net
+ *   front stacked on that side, the weak side thinly covered (middle point; 6th skater at the weak circle top).
+ * spread: two points, two flanks low at the hashmarks, net front (4 skaters: one flank only; 6th skater in the bumper).
  */
 export const PP_FORMATIONS = {
   umbrella: {
@@ -154,6 +158,16 @@ export const PP_FORMATIONS = {
     4: ["half_wall_right", "point_middle", "circle_top_left", "net_front"],
     5: ["half_wall_right", "point_middle", "bumper_slot", "circle_top_left", "net_front"],
     6: ["half_wall_right", "point_middle", "bumper_slot", "circle_top_left", "net_front", "goal_line_left"],
+  },
+  overload: {
+    4: ["half_wall_left", "goal_line_left", "net_front", "point_middle"],
+    5: ["half_wall_left", "goal_line_left", "bumper_slot", "net_front", "point_middle"],
+    6: ["half_wall_left", "goal_line_left", "bumper_slot", "net_front", "point_middle", "circle_top_right"],
+  },
+  spread: {
+    4: ["point_left", "point_right", "hash_left", "net_front"],
+    5: ["point_left", "point_right", "hash_left", "hash_right", "net_front"],
+    6: ["point_left", "point_right", "hash_left", "hash_right", "net_front", "bumper_slot"],
   },
 } as const satisfies Record<string, { 4: Spots4; 5: Spots5; 6: Spots6 }>;
 
@@ -230,6 +244,15 @@ export const ENTRY = {
   CARRY_P: 0.75,       // ASSUMPTION — tune (pacing target: <= 2 zone entries/run): P(controlled carry-in succeeds)
   DROP_P: 0.7,         // ASSUMPTION — tune (pacing target: <= 2 zone entries/run): P(drop-pass entry succeeds)
   DUMP_RECOVER_P: 0.35, // ASSUMPTION — tune: P(PP recovers its dump-in)
+  /**
+   * Lane offsets added to the logit of the method's success p. ASSUMPTION — tune. The PK is assumed to
+   * shade toward the side the PP last set up on (RunState.formationSide = "strong"), so the opposite
+   * lane ("weak") is likelier and the shaded lane harder; "middle" is neutral, which also keeps the odds
+   * of calls that omit the lane identical to the pre-lane model.
+   */
+  LANE_LOGIT: { weak: 0.3, middle: 0, strong: -0.3 },
+  P_FLOOR: 0.05, // ASSUMPTION — tune: lowest entry success p after the lane offset
+  P_CAP: 0.95,   // ASSUMPTION — tune: highest entry success p after the lane offset
 } as const;
 
 /** Breakouts after the PK clears (only asked when settings.askEveryTouch). All ASSUMPTION — tune. */

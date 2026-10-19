@@ -73,6 +73,8 @@ function pen(id: number, kind: PenaltyKind, expiresAtS: number | null, side: "pp
 interface Spec {
   id: string; gameType: GameType; clock: Clock; score: Score; penalties: Penalty[];
   goaliePulled: boolean; pp: number; pk: number;
+  /** Start formation when the caller does not pick one. */
+  formation?: PpFormationName;
 }
 
 function build(spec: Spec, o: FixtureOpts): RunInput {
@@ -87,7 +89,7 @@ function build(spec: Spec, o: FixtureOpts): RunInput {
     pp: { skaters: synthPp(spec.pp) },
     pk: { skaters: synthPk(spec.pk), goalie: synthGoalie() },
     rates: synthRates(),
-    settings: { askEveryTouch: o.askEveryTouch ?? false, formation: o.formation ?? "umbrella" },
+    settings: { askEveryTouch: o.askEveryTouch ?? false, formation: o.formation ?? spec.formation ?? "umbrella" },
   };
 }
 
@@ -195,6 +197,35 @@ export function coincidentalPair(o: FixtureOpts = {}): RunInput {
       pen(3, "minor", t + PENALTY_S.minor)],
     goaliePulled: false, pp: 5, pk: 3 }, o);
 }
+
+/** 5v4 starting in the overload (strong side follows the opening draw). */
+export function fiveOnFourOverload(o: FixtureOpts = {}): RunInput {
+  const base = fiveOnFour(o);
+  return { ...base, scenarioId: "synthetic-5v4-overload", settings: { ...base.settings, formation: o.formation ?? "overload" } };
+}
+
+/** 5v4 starting in the spread. */
+export function fiveOnFourSpread(o: FixtureOpts = {}): RunInput {
+  const base = fiveOnFour(o);
+  return { ...base, scenarioId: "synthetic-5v4-spread", settings: { ...base.settings, formation: o.formation ?? "spread" } };
+}
+
+/** 6v4, goalie pulled, starting in the overload (6-skater lists). */
+export function sixOnFourOverload(o: FixtureOpts = {}): RunInput {
+  const base = sixOnFourGoaliePulled(o);
+  return { ...base, scenarioId: "synthetic-6v4-overload", settings: { ...base.settings, formation: o.formation ?? "overload" } };
+}
+
+/** Regular-season OT 4v3 starting in the spread (4-skater lists). */
+export function regOtFourOnThreeSpread(o: FixtureOpts = {}): RunInput {
+  const base = regOtFourOnThree(o);
+  return { ...base, scenarioId: "synthetic-ot-4v3-spread", settings: { ...base.settings, formation: o.formation ?? "spread" } };
+}
+
+/** Fixtures that start in the overload / spread; separate from ALL_FIXTURES so the fuzz mix stays put. */
+export const FORMATION_FIXTURES: Readonly<Record<string, (o?: FixtureOpts) => RunInput>> = {
+  fiveOnFourOverload, fiveOnFourSpread, sixOnFourOverload, regOtFourOnThreeSpread,
+};
 
 /** Every builder by name, for loops in tests and fuzzers. */
 export const ALL_FIXTURES: Readonly<Record<string, (o?: FixtureOpts) => RunInput>> = {

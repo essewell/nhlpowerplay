@@ -34,7 +34,10 @@ import {
   REGULATION_PERIODS, SET_PLAYS, SET_PLAY_MAX_SPOT_DIST_FT, SHOT_OPTIONS, SKATE_SPEED_FPS, TIME,
   type SetPlayId, type ShotOption, type SpotName,
 } from "./constants.ts";
-import { isSkaterCount, moveCarrierTo, nearestPp, pkPositions, placePp, spotPos, type PpSpot } from "./formation.ts";
+import {
+  formationSpots, isSkaterCount, moveCarrierTo, nearestPp, pkPositions, placePp, placePpPinned, spotPos,
+  type FormationSide, type PpSpot,
+} from "./formation.ts";
 import {
   baseRate, dist, distanceBucket, passLikelihood, shotLikelihood, skateLikelihood, validPos, zoneFor,
   type Corner, type Defender, type ShotLikelihood, type Skater, type Vec2,
@@ -42,8 +45,8 @@ import {
 import { prngNext } from "./modes.ts";
 import { err, ok, type Result } from "./result.ts";
 import type {
-  BreakoutMethod, Call, CallOption, EndDetail, EndReason, EntryMethod, FaceoffDot, FaceoffTarget, GameType,
-  RunEvent, RunInput, RunState,
+  BreakoutMethod, Call, CallOption, EndDetail, EndReason, EntryLane, EntryMethod, FaceoffDot, FaceoffTarget, GameType,
+  PpFormationName, RunEvent, RunInput, RunState,
 } from "./sim-types.ts";
 
 /** Chooses a call from the options offered; used by autoPlay (bots, fuzzers, grader rollouts). */
@@ -56,6 +59,7 @@ const STATE_VERSION = 1;
 const CORNERS: readonly Corner[] = ["top_left", "top_right", "bottom_left", "bottom_right", "five_hole"];
 const FACEOFF_TARGETS: readonly FaceoffTarget[] = ["point", "half_wall", "back"];
 const ENTRY_METHODS: readonly EntryMethod[] = ["carry", "drop", "dump"];
+const ENTRY_LANES: readonly EntryLane[] = ["left", "middle", "right"];
 const BREAKOUT_METHODS: readonly BreakoutMethod[] = ["carry", "pass", "rim"];
 const FORMATION_NAMES: readonly string[] = Object.keys(PP_FORMATIONS);
 
@@ -65,6 +69,8 @@ const isSetPlay = (s: unknown): s is SetPlayId => typeof s === "string" && Objec
 const isCorner = (s: unknown): s is Corner => CORNERS.some((c) => c === s);
 const isTarget = (s: unknown): s is FaceoffTarget => FACEOFF_TARGETS.some((c) => c === s);
 const isEntry = (s: unknown): s is EntryMethod => ENTRY_METHODS.some((c) => c === s);
+const isLane = (s: unknown): s is EntryLane => ENTRY_LANES.some((c) => c === s);
+const isFormation = (s: unknown): s is PpFormationName => typeof s === "string" && FORMATION_NAMES.includes(s);
 const isBreakout = (s: unknown): s is BreakoutMethod => BREAKOUT_METHODS.some((c) => c === s);
 const isProb = (p: number): boolean => Number.isFinite(p) && p >= 0 && p <= 1;
 const posMult = (m: number): boolean => Number.isFinite(m) && m > 0;
@@ -72,6 +78,32 @@ const sigmoid = (z: number): number => 1 / (1 + Math.exp(-z));
 const logit = (p: number): number => Math.log(p / (1 - p));
 const midpoint = (a: Vec2, b: Vec2): Vec2 => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 const copyVec = (v: Vec2): Vec2 => ({ x: v.x, y: v.y });
+
+/** O(1). The PK shades toward the PP's last strong side (ASSUMPTION, see ENTRY.LANE_LOGIT). */
+const laneKind = (lane: EntryLane, side: FormationSide): "weak" | "middle" | "strong" =>
+  lane === "middle" ? "middle" : lane === side ? "strong" : "weak";
+
+/**
+ * O(1). Where a successful entry lands (ASSUMPTION — tune). `carrier` is the spot the puck carrier
+ * ends on; for a drop the trailer receives at `trailer` while the dropper takes `carrier`.
+ * carry: that side's half wall (middle: point_middle). drop: trailer at that lane's point, dropper on
+ * that side's half wall (middle: circle top on the overload side). dump: PP recovery low on that side
+ * (goal line; middle: net front).
+ */
+function entryLanding(method: EntryMethod, lane: EntryLane, side: FormationSide): { carrier: SpotName; trailer: SpotName | null } {
+  switch (method) {
+    case "carry":
+      return { carrier: lane === "left" ? "half_wall_left" : lane === "right" ? "half_wall_right" : "point_middle", trailer: null };
+    case "drop":
+      return {
+        carrier: lane === "left" ? "half_wall_left" : lane === "right" ? "half_wall_right"
+          : side === "left" ? "circle_top_left" : "circle_top_right",
+        trailer: lane === "left" ? "point_left" : lane === "right" ? "point_right" : "point_middle",
+      };
+    case "dump":
+      return { carrier: lane === "left" ? "goal_line_left" : lane === "right" ? "goal_line_right" : "net_front", trailer: null };
+  }
+}
 
 // ============================================================================ validation
 // Inputs and states may come from the network (server replay, a resumed run), so every check is
@@ -262,6 +294,11 @@ function validateState(s: unknown): Result<RunState> {
   }
   if (!Array.isArray(s.pkPos) || !s.pkPos.every(isVec)) return err("invalid run state: pkPos");
   if (!Array.isArray(s.log)) return err("invalid run state: log");
+  // Older saved states have no formation fields; makeView fills them from the input.
+  if (s.formation !== undefined && !isFormation(s.formation)) return err("invalid run state: formation");
+  if (s.formationSide !== undefined && s.formationSide !== "left" && s.formationSide !== "right") {
+    return err("invalid run state: formationSide");
+  }
   return ok(s as unknown as RunState);
 }
 
@@ -378,8 +415,9 @@ function syncRoster(m: Sim): Result<void> {
   }
   const on = new Set(cur.map((x) => x.id));
   const taken = new Set<SpotName>(cur.map((x) => x.spot));
-  const free = [...PP_FORMATIONS[m.input.settings.formation][n], ...Object.keys(OZ_SPOTS).filter(isSpot)]
-    .filter((sp) => !taken.has(sp));
+  const spots = formationSpots(m.s.formation, n, m.s.formationSide);
+  if (!spots.ok) return spots;
+  const free = [...spots.value, ...Object.keys(OZ_SPOTS).filter(isSpot)].filter((sp) => !taken.has(sp));
   const joining = m.input.pp.skaters.filter((s) => !on.has(s.id)).slice(0, n - cur.length);
   const out: PpSpot[] = cur.map((x) => ({ ...x }));
   for (const s of joining) {
@@ -416,7 +454,9 @@ function setFaceoff(m: Sim, dot: FaceoffDot): Result<void> {
   const ids = rosterIds(m);
   const first = ids[0];
   if (first === undefined) return err("no PP skaters on ice");
-  const placed = placePp(ids, m.input.settings.formation, first);
+  // The overload side follows the dot: the strong side is where the draw is.
+  if (dot !== "centre") m.s.formationSide = dot === "oz_left" ? "left" : "right";
+  const placed = placePp(ids, m.s.formation, first, m.s.formationSide);
   if (!placed.ok) return placed;
   m.s.ppSpots = placed.value;
   m.s.puck = copyVec(FACEOFF_DOTS[dot]);
@@ -468,8 +508,8 @@ type Plan =
   | { kind: "skate"; to: SpotName; p: number; mid: Vec2 }
   | { kind: "shoot"; shooterId: number; at: Vec2; shot: ShotLikelihood }
   | { kind: "set_play"; receiverId: number; toSpot: SpotName; passP: number; mid: Vec2; shot: ShotLikelihood }
-  | { kind: "faceoff"; dot: FaceoffDot; takerId: number; target: FaceoffTarget; p: number }
-  | { kind: "zone_entry"; method: EntryMethod; p: number }
+  | { kind: "faceoff"; dot: FaceoffDot; takerId: number; target: FaceoffTarget; p: number; formation?: PpFormationName }
+  | { kind: "zone_entry"; method: EntryMethod; lane: EntryLane; formation: PpFormationName; p: number }
   | { kind: "breakout"; method: BreakoutMethod; p: number };
 interface Evaluated { option: CallOption; plan: Plan }
 
@@ -481,7 +521,9 @@ function makeView(state: RunState, input: RunInput, gt: GameType): Result<View> 
   if (!now.ok) return now;
   const b = nextBoundaryS(state.penalties, state.clock, gt);
   if (!b.ok) return b;
-  return ok({ input, gt, s: state, now: now.value, boundary: b.value });
+  const raw: Partial<RunState> = state;
+  const s: RunState = { ...state, formation: raw.formation ?? input.settings.formation, formationSide: raw.formationSide ?? "left" };
+  return ok({ input, gt, s, now: now.value, boundary: b.value });
 }
 
 /** O(1). */
@@ -561,8 +603,11 @@ function callDetail(call: Call): Record<string, string | number> {
     case "skate": return { type: call.type, to: call.to };
     case "shoot": return { type: call.type, option: call.option, corner: call.corner };
     case "set_play": return { type: call.type, id: call.id };
-    case "faceoff": return { type: call.type, takerId: call.takerId, target: call.target };
-    case "zone_entry": return { type: call.type, method: call.method };
+    case "faceoff": return { type: call.type, takerId: call.takerId, target: call.target,
+      ...(call.formation !== undefined ? { formation: call.formation } : {}) };
+    case "zone_entry": return { type: call.type, method: call.method,
+      ...(call.lane !== undefined ? { lane: call.lane } : {}),
+      ...(call.formation !== undefined ? { formation: call.formation } : {}) };
     case "breakout": return { type: call.type, method: call.method };
   }
 }
@@ -647,6 +692,7 @@ function evaluate(v: View, call: Call): Result<Evaluated> {
     case "faceoff": {
       if (ph.kind !== "faceoff") return wrongPhase();
       if (!isTarget(call.target)) return err(`unknown faceoff target ${String(call.target)}`);
+      if (call.formation !== undefined && !isFormation(call.formation)) return err(`unknown formation ${String(call.formation)}`);
       if (!v.s.ppSpots.some((x) => x.id === call.takerId)) return err(`unknown faceoff taker ${call.takerId}`);
       const taker = v.input.pp.skaters.find((s) => s.id === call.takerId);
       const opp = bestPkTaker(v.input);
@@ -654,17 +700,24 @@ function evaluate(v: View, call: Call): Result<Evaluated> {
       const pA = taker.faceoffWinRate, pB = opp.rate;
       const p = (pA * (1 - pB)) / (pA * (1 - pB) + pB * (1 - pA));
       return done(option(v, call, p, { pTaker: pA, pOpponent: pB, opponentId: opp.id }, TIME.FACEOFF_S),
-        { kind: "faceoff", dot: ph.dot, takerId: call.takerId, target: call.target, p });
+        { kind: "faceoff", dot: ph.dot, takerId: call.takerId, target: call.target, p,
+          ...(call.formation !== undefined ? { formation: call.formation } : {}) });
     }
     case "zone_entry": {
       if (ph.kind !== "zone_entry") return wrongPhase();
       if (!isEntry(call.method)) return err(`unknown entry method ${String(call.method)}`);
+      if (call.lane !== undefined && !isLane(call.lane)) return err(`unknown entry lane ${String(call.lane)}`);
+      if (call.formation !== undefined && !isFormation(call.formation)) return err(`unknown formation ${String(call.formation)}`);
+      const lane = call.lane ?? "middle", formation = call.formation ?? v.s.formation;
       const c = carrierOf(v);
       if (!c.ok) return c;
-      const p = call.method === "carry" ? sigmoid(logit(ENTRY.CARRY_P) + Math.log(c.value.puckControlMult))
-        : call.method === "drop" ? sigmoid(logit(ENTRY.DROP_P) + Math.log(c.value.playmakingMult))
-          : ENTRY.DUMP_RECOVER_P;
-      return done(option(v, call, p, { carrierId: c.value.id }, TIME.ENTRY_S), { kind: "zone_entry", method: call.method, p });
+      const laneLogit = ENTRY.LANE_LOGIT[laneKind(lane, v.s.formationSide)];
+      const base = call.method === "carry" ? logit(ENTRY.CARRY_P) + Math.log(c.value.puckControlMult)
+        : call.method === "drop" ? logit(ENTRY.DROP_P) + Math.log(c.value.playmakingMult)
+          : logit(ENTRY.DUMP_RECOVER_P);
+      const p = Math.min(ENTRY.P_CAP, Math.max(ENTRY.P_FLOOR, sigmoid(base + laneLogit)));
+      return done(option(v, call, p, { carrierId: c.value.id, laneLogit, laneOddsMult: Math.exp(laneLogit) }, TIME.ENTRY_S),
+        { kind: "zone_entry", method: call.method, lane, formation, p });
     }
     case "breakout": {
       if (ph.kind !== "breakout") return wrongPhase();
@@ -684,7 +737,9 @@ function candidates(v: View): Result<Call[]> {
     case "ended": return err("run has ended");
     case "faceoff":
       return ok(v.s.ppSpots.flatMap((x) => FACEOFF_TARGETS.map((target): Call => ({ type: "faceoff", takerId: x.id, target }))));
-    case "zone_entry": return ok(ENTRY_METHODS.map((method): Call => ({ type: "zone_entry", method })));
+    case "zone_entry":
+      return ok(ENTRY_METHODS.flatMap((method) => ENTRY_LANES.map((lane): Call =>
+        ({ type: "zone_entry", method, lane, formation: v.s.formation }))));
     case "breakout": return ok(BREAKOUT_METHODS.map((method): Call => ({ type: "breakout", method })));
     case "decision": {
       const c = carrierOf(v);
@@ -709,7 +764,7 @@ function candidates(v: View): Result<Call[]> {
 /** Auto-played follow-ups, processed until a pause phase. */
 type Action =
   | { k: "loose" } | { k: "pk_possession" } | { k: "clear" } | { k: "regroup" } | { k: "auto_breakout" }
-  | { k: "setup"; carrierId: number };
+  | { k: "setup"; carrierId: number; method: EntryMethod; lane: EntryLane };
 
 /** True when the clock sits exactly at the end of its period. O(1). */
 function atPeriodEnd(m: Sim): Result<boolean> {
@@ -877,17 +932,35 @@ function resolvePlan(m: Sim, plan: Plan): Result<Action | null> {
       return shotChain(m, plan.receiverId, spotPos(plan.toSpot), plan.shot);
     }
     case "faceoff":
-      if (draw(m, "faceoff", plan.p, { takerId: plan.takerId, dot: plan.dot })) {
+      if (draw(m, "faceoff", plan.p, { takerId: plan.takerId, dot: plan.dot,
+        ...(plan.formation !== undefined ? { formation: plan.formation } : {}) })) {
+        const changed = plan.formation !== undefined && plan.formation !== m.s.formation;
+        if (plan.formation !== undefined) m.s.formation = plan.formation;
         if (plan.dot === "centre") return toZoneEntry(m);
         const w = faceoffWinner(m, plan.target, plan.dot);
-        return w.ok ? giveTo(m, w.value) : w;
+        if (!w.ok) return w;
+        if (changed) {
+          // A new setup on a won draw: the winner keeps his spot, the rest fall into the new formation.
+          const at = spotOf(m, w.value);
+          if (!at.ok) return at;
+          const placed = placePpPinned(rosterIds(m), m.s.formation, m.s.formationSide, [{ id: w.value, spot: at.value }]);
+          if (!placed.ok) return placed;
+          m.s.ppSpots = placed.value;
+          log(m, "setup", { detail: { trigger: "faceoff", formation: m.s.formation, side: m.s.formationSide, dot: plan.dot } });
+        }
+        return giveTo(m, w.value);
       }
       m.s.carrier = { kind: "pk" };
       return ok(draw(m, "faceoff_loss_clear", FACEOFF.LOSS_CLEAR_P) ? { k: "clear" } : { k: "pk_possession" });
     case "zone_entry": {
       const c = m.s.carrier;
       if (c.kind !== "pp") return err("zone entry without a PP carrier");
-      if (draw(m, "entry", plan.p, { method: plan.method })) return ok({ k: "setup", carrierId: c.id });
+      // The chosen setup applies whether or not the entry works: it is the player's standing preference.
+      m.s.formation = plan.formation;
+      if (plan.lane !== "middle") m.s.formationSide = plan.lane;
+      if (draw(m, "entry", plan.p, { method: plan.method, lane: plan.lane, formation: plan.formation, side: m.s.formationSide })) {
+        return ok({ k: "setup", carrierId: c.id, method: plan.method, lane: plan.lane });
+      }
       return pkGets(m, { x: OZ_BOUNDS.X_MIN, y: 0 });
     }
     case "breakout":
@@ -945,10 +1018,21 @@ function runAction(m: Sim, a: Action): Result<Action | null> {
       });
     case "setup":
       return timed(m, TIME.SETUP_S, "setup", () => {
-        const placed = placePp(rosterIds(m), m.input.settings.formation, a.carrierId);
+        const ids = rosterIds(m);
+        const land = entryLanding(a.method, a.lane, m.s.formationSide);
+        const trailerId = land.trailer === null ? undefined : ids.find((id) => id !== a.carrierId);
+        if (land.trailer !== null && trailerId === undefined) return err("drop entry needs a trailing teammate");
+        const pins: PpSpot[] = [{ id: a.carrierId, spot: land.carrier }];
+        if (land.trailer !== null && trailerId !== undefined) pins.push({ id: trailerId, spot: land.trailer });
+        const placed = placePpPinned(ids, m.s.formation, m.s.formationSide, pins);
         if (!placed.ok) return placed;
         m.s.ppSpots = placed.value;
-        return giveTo(m, a.carrierId);
+        const holder = trailerId ?? a.carrierId;
+        log(m, "setup", { detail: {
+          trigger: "entry", method: a.method, lane: a.lane, formation: m.s.formation, side: m.s.formationSide,
+          carrierId: holder, spot: trailerId !== undefined && land.trailer !== null ? land.trailer : land.carrier,
+        } });
+        return giveTo(m, holder);
       });
   }
 }
@@ -971,7 +1055,7 @@ export function initRun(input: RunInput): Result<RunState> {
   const ids = input.pp.skaters.slice(0, now.value.ppOnIce).map((s) => s.id);
   const first = ids[0];
   if (first === undefined) return err("no PP skaters");
-  const placed = placePp(ids, input.settings.formation, first);
+  const placed = placePp(ids, input.settings.formation, first, "left");
   if (!placed.ok) return placed;
   const m: Sim = {
     input, gt: gt.value, abs: now.value.now, ci: null,
@@ -979,7 +1063,8 @@ export function initRun(input: RunInput): Result<RunState> {
       v: STATE_VERSION, rng: input.seed >>> 0, callCount: 0, step: 0,
       clock: { ...input.clock }, penalties: input.penalties.map((p) => ({ ...p })), score: { ...input.score },
       goaliePulled: input.goaliePulled, phase: { kind: "faceoff", dot: "centre" }, puck: copyVec(FACEOFF_DOTS.centre),
-      carrier: { kind: "loose" }, ppSpots: placed.value, pkPos: [], justScored: false, log: [],
+      carrier: { kind: "loose" }, ppSpots: placed.value, pkPos: [], justScored: false,
+      formation: input.settings.formation, formationSide: "left", log: [],
     },
   };
   const left = draw(m, "opening_faceoff", OPENING_FACEOFF_LEFT_P);
@@ -1022,7 +1107,7 @@ export function applyCall(state: RunState, input: RunInput, call: Call, callInde
   const ev = evaluate(v.value, call);
   if (!ev.ok) return ev;
 
-  const m: Sim = { input, gt: gt.value, s: cloneState(state), abs: v.value.now, ci: callIndex };
+  const m: Sim = { input, gt: gt.value, s: cloneState(v.value.s), abs: v.value.now, ci: callIndex };
   m.s.callCount++;
   m.s.justScored = false;
   log(m, "call", { p: ev.value.option.p, detail: callDetail(call) });

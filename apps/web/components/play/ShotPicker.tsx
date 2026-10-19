@@ -15,6 +15,7 @@ import { BackButton } from "../ui/BackButton.tsx";
 import { cx, FOCUS_RING } from "../ui/cx.ts";
 import { EstimateTag, InfoTip } from "../ui/Tooltip.tsx";
 import { pctValue, t } from "../../lib/copy.ts";
+import { fillCopy } from "../../lib/play/strings.ts";
 import {
   CORNER_COPY, ESTIMATE_SHOT_TYPES, optionDisabled, SHOT_CORNERS, SHOT_TYPE_COPY, SHOT_TYPES, shotSummary,
   shotTargetOption, shotTypeOption, type OptionOf, type ShotType,
@@ -196,6 +197,9 @@ export function ShotPicker({ shoot, lastName, spotLabel, busy, onBack, onShoot }
         ) : (
           <span className="text-[15px] font-semibold text-text-muted">{t("shot.cta.disabled")}</span>
         )}
+        {chosen?.cutByClock ? (
+          <p className="m-0 text-[13px] text-text-soft">{fillCopy("play.cut")}</p>
+        ) : null}
         <dl className="m-0 grid grid-cols-3 gap-2">
           {(
             [

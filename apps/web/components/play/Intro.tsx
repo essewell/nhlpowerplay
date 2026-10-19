@@ -8,13 +8,25 @@
 import { Button } from "../ui/Button.tsx";
 import { BackButton } from "../ui/BackButton.tsx";
 import { Chip } from "../ui/Chip.tsx";
+import type { PpFormationName } from "@powerplay/engine/sim-types.ts";
 import type { Mode, RunSnapshot } from "../../lib/contracts.ts";
 import { t } from "../../lib/copy.ts";
+import { currentSetup, ppOnIce } from "../../lib/play/options.ts";
 import { scoreboardModel } from "../../lib/play/scoreboard.ts";
+import { fillCopy } from "../../lib/play/strings.ts";
+import { FormationPicker } from "./FormationPicker.tsx";
 import { Scoreboard } from "./Scoreboard.tsx";
 
-export function Intro({ snapshot, mode, onStart }: { snapshot: RunSnapshot; mode: Mode; onStart: () => void }) {
+interface Props {
+  snapshot: RunSnapshot;
+  mode: Mode;
+  onStart: () => void;
+  onFormation: (formation: PpFormationName) => void;
+}
+
+export function Intro({ snapshot, mode, onStart, onFormation }: Props) {
   const { scenario } = snapshot;
+  const setup = currentSetup(snapshot);
   const board = scoreboardModel(snapshot);
   const stage =
     scenario.stageText === null
@@ -50,6 +62,17 @@ export function Intro({ snapshot, mode, onStart }: { snapshot: RunSnapshot; mode
           </div>
         </dl>
         {scenario.stakes ? <p className="m-0 text-sm leading-[1.45] text-text-soft">{scenario.stakes}</p> : null}
+      </section>
+
+      <section aria-label={fillCopy("formation.title")} className="flex flex-col gap-2.5">
+        <p className="m-0 text-sm leading-[1.45] text-text-soft">{fillCopy("formation.intro.body")}</p>
+        <FormationPicker
+          value={snapshot.input.settings.formation}
+          onChange={onFormation}
+          skaters={ppOnIce(snapshot)}
+          side={setup.side}
+          label={fillCopy("formation.title")}
+        />
       </section>
 
       <div className="mt-auto">
